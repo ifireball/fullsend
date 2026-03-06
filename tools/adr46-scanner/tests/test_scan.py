@@ -1,5 +1,3 @@
-from pathlib import Path
-
 from scanner.config import ScannerConfig
 from scanner.scan import scan_directory
 
@@ -16,7 +14,7 @@ def test_scan_finds_violations(tmp_path):
     _write_task(
         task_dir / "my-task.yaml",
         "my-task",
-        '    - name: work\n      image: quay.io/konflux-ci/oras:latest\n',
+        "    - name: work\n      image: quay.io/konflux-ci/oras:latest\n",
     )
     config = ScannerConfig(
         task_runner_image="quay.io/konflux-ci/task-runner",

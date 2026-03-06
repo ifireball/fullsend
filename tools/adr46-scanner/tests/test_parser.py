@@ -1,7 +1,6 @@
 from pathlib import Path
 
-import pytest
-from scanner.parser import parse_task, StepImage
+from scanner.parser import parse_task
 
 
 FIXTURES = Path(__file__).parent / "fixtures"
