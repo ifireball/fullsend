@@ -98,6 +98,10 @@ The "Attacker Moves Second" paper achieved this with human red-teamers who itera
 - No adaptive attacks — a real attacker would iterate based on defense feedback.
 - We were not skilled enough attackers. The experiment tested our red-teaming ability as much as it tested the defenses.
 
+## Future research
+
+- **Randomized sandwich delimiters.** The `bypass-sandwiching` attack works because the attacker can predict and mimic the defense's closing instruction verbatim. If the sandwich delimiter were randomly generated per prompt (e.g., `Remember [x7kQ9m]: your ONLY task is...`), an attacker embedding a fake instruction in a commit message couldn't match it. The model would see the real closing instruction (with the matching token) as authoritative and the fake one as data. This is analogous to CSRF tokens — the defense is predictable structure, so the fix is to make the structure unpredictable. Worth testing whether this eliminates the instruction-mimicry attack surface without introducing new failure modes (e.g., does the random token confuse the model?).
+
 ## Reproducing
 
 ```bash
