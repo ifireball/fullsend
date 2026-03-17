@@ -166,6 +166,51 @@ Analogous to mutation testing for code: systematically introduce small changes t
 - Some mutations produce meaningfully equivalent instructions (rewording without changing behavior), creating false "test gaps"
 - Mutation generation for natural language is less well-defined than for code
 
+## Eval frameworks
+
+The approaches above aren't purely theoretical — an emerging class of LLM evaluation tools already implements parts of them. None covers the full problem space, but they provide a starting point and avoid building everything from scratch.
+
+### promptfoo
+
+[promptfoo](https://www.promptfoo.dev/) is an open-source eval framework built around YAML-defined test cases, assertions, and comparison reports. It's the closest match to the golden-set and CI pipeline patterns described above:
+
+- Test cases are defined declaratively (input, expected output, assertion type) — a natural fit for the golden-set structure in Approach 1
+- Supports multiple assertion types: exact match, contains, similarity, regex, and LLM-graded — which maps to behavioral contract verification in Approach 2
+- Has a red-teaming mode that generates adversarial inputs, relevant to the adversarial evaluation step in the CI pipeline
+- Designed for CI integration, producing machine-readable output
+
+The main gap: promptfoo evaluates single prompts against single outputs. It doesn't natively model multi-agent composition or cross-agent interaction effects. Testing whether the Intent Alignment Agent and Correctness Agent together produce correct outcomes would require custom harness code on top.
+
+### deepeval
+
+[deepeval](https://docs.confident-ai.com/) is a Python-native eval library with built-in metrics (answer relevancy, faithfulness, hallucination, bias) and a pytest integration. Its distinguishing feature is statistical rigor:
+
+- Supports confidence intervals and minimum-sample-size calculations, directly addressing the non-determinism problem — instead of picking an arbitrary "run it 100 times" threshold, deepeval can compute how many runs are needed for a given confidence level
+- Metrics are composable, so you can define multi-dimensional pass criteria (e.g., "must be relevant AND must not hallucinate file paths")
+- The pytest integration means eval suites look like normal test suites, which lowers the adoption barrier for teams already testing in Python
+
+The main gap: deepeval's built-in metrics are oriented toward conversational AI (relevancy, faithfulness to a source document). Evaluating whether a review agent correctly detected tier escalation requires custom metrics — the framework supports this, but the useful metrics would need to be written.
+
+### lightspeed-evaluation
+
+[lightspeed-evaluation](https://github.com/instructlab/lightspeed-evaluation) is an evaluation framework from the InstructLab project, focused on validating AI assistant behavior against expected task completions. It's worth noting because of its proximity to the Red Hat ecosystem that konflux-ci operates in:
+
+- Designed for evaluating instruction-following behavior, which is conceptually close to testing whether an agent's instructions produce the intended behavior
+- Includes task-based evaluation patterns where inputs and expected outcomes are defined declaratively
+
+The main gap: lightspeed-evaluation is oriented toward conversational assistants rather than code review agents. Adapting it to evaluate PR review decisions would require significant extension. Its relevance is more as a reference for evaluation methodology than a drop-in tool.
+
+### What the tools don't cover
+
+All three frameworks operate at the single-agent level — they evaluate one prompt against one output. The harder problems identified in this document remain open:
+
+- **Cross-agent composition testing** — no framework models the interaction between multiple agents reviewing the same PR
+- **Mutation testing for natural language** — no framework generates instruction mutations and checks whether the eval suite catches them (though an LLM could generate mutations and promptfoo or deepeval could run the evals)
+- **Absence detection** — the tools can verify that an agent does something correctly, but detecting that it silently stopped doing something requires the test author to have anticipated that capability in the first place
+- **LLM-as-judge trust** — all three rely on LLM-graded assertions at some level, which circles back to the open question of whether that just moves the trust problem rather than solving it
+
+The tooling is maturing quickly — what's available today may look different in six months. Any choice should be held lightly and re-evaluated periodically.
+
 ## Versioning agent instructions
 
 Regardless of the testing approach, agent instructions need version control and change tracking:
