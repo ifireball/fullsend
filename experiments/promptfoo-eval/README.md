@@ -108,13 +108,30 @@ To make this work in a CI pipeline, you need:
 - **Temperature=0 masks non-determinism.** At temperature=0, 3 repeats are redundant (all identical). The real non-determinism test requires temperature>0 and statistical thresholds, which we didn't exercise.
 - **Small golden set.** 8 test cases is a proof of concept, not coverage. A production golden set would need dozens of cases per capability, plus the mutation testing approach from testing-agents.md to verify the test suite itself is sufficient.
 
+### Promptfoo tests prompts, not agents
+
+This is the most important finding and it's easy to miss: **promptfoo does not test agents.** It tests prompts.
+
+Under the hood, promptfoo makes direct HTTP calls to model provider APIs — in our case, the Vertex AI REST endpoint for Claude Sonnet 4.6. Each test case is a single prompt-in, response-out API call. There is no agent loop, no tool use, no multi-turn conversation, no code execution. Promptfoo does not use OpenCode, Claude Code, or any agentic framework. It is a test harness for single-turn LLM inference.
+
+This means what we actually tested was: "given this system prompt and these inputs, does the model produce an output starting with the right classification token?" That's a useful test — it catches prompt regressions and verifies format compliance — but it is not testing an agent. Real agents in the konflux-ci context would:
+
+- Conduct multi-turn conversations with tool calls (reading files, checking CI status, querying APIs)
+- Compose decisions across multiple sub-agents (Intent Alignment + Correctness + Security)
+- Operate on real codebases with real context windows and real retrieval
+- Make sequential decisions where earlier outputs influence later behavior
+
+None of that is exercised by promptfoo. What we tested is analogous to unit-testing a single function in isolation: necessary but not sufficient. An agent could pass every promptfoo golden-set test and still fail in practice because the prompt works in isolation but breaks when combined with tool outputs, long context, or multi-agent composition.
+
+Testing actual agent behavior requires running the actual agent — giving it a task in a controlled environment and evaluating the end-to-end result. That's integration testing, and it requires a fundamentally different harness: one that launches the agent runtime, provides it with a sandboxed repo and mock services, captures its actions, and evaluates the outcome. Promptfoo is not that tool and does not claim to be.
+
 ### Is promptfoo reasonable for CI?
 
-**Yes, for the narrow case of golden-set evaluation of single-agent tasks.** The YAML-driven test cases, built-in provider integrations, machine-readable output, and `--repeat` flag address the core requirements. The overhead (Node.js, credentials, ~$2-5 per eval run) is manageable.
+**Yes, but only for the narrow case of prompt regression testing.** The YAML-driven test cases, built-in provider integrations, machine-readable output, and `--repeat` flag address the core requirements for golden-set evaluation of individual prompts. The overhead (Node.js, credentials, ~$2-5 per eval run) is manageable. Think of it as the `pytest` layer — it tests the building blocks.
 
-**No, for the harder problems.** Cross-agent composition, mutation testing of instructions, and absence detection all require custom tooling on top of or instead of promptfoo. Promptfoo is a good foundation for Approach 1 (golden-set) from testing-agents.md but doesn't address Approaches 2-4.
+**No, for testing agents themselves.** An agent is more than its system prompt. Cross-agent composition, tool-use behavior, multi-turn reasoning, and end-to-end task completion all require running the agent in a controlled environment and evaluating outcomes — not testing prompts in isolation. Promptfoo is a good foundation for Approach 1 (golden-set) from testing-agents.md but doesn't address Approaches 2-4, and more fundamentally, it operates at the wrong level of abstraction for agent-level verification.
 
-The most practical path: start with promptfoo for golden-set evaluation of individual agent capabilities, build the CI pipeline and maintenance workflows around it, and layer custom tooling for composition testing later. The golden set itself is the hard part — the framework choice matters less than the test case quality.
+The most practical path: use promptfoo for prompt regression testing (catching instruction changes that break known capabilities), but recognize that this is the unit-test layer. The integration-test layer — actually running agents against controlled tasks and evaluating their behavior — is a separate problem that needs a separate tool. The golden set itself is the hard part — the framework choice matters less than the test case quality.
 
 ## Reproducing
 
