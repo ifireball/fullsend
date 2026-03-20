@@ -1,3 +1,12 @@
+---
+title: "1. Use ADRs for decision making"
+status: Accepted
+relates_to:
+  - "*"
+topics:
+  - process
+---
+
 # 1. Use ADRs for decision making
 
 Date: 2026-03-20
@@ -47,9 +56,22 @@ that frame a decision and its options, so the community can discuss and refine
 the options over time without pressure to decide prematurely. When consensus
 forms, the ADR is updated to Accepted with a Decision section filled in.
 
+Each ADR includes YAML frontmatter with structured metadata:
+
+- **title** -- The ADR title (required).
+- **status** -- Must match the `## Status` section in the body (required).
+- **relates_to** -- A list of problem document names (filenames without `.md`
+  from `docs/problems/`) that this ADR relates to. Use `"*"` for ADRs that
+  apply broadly across all problem areas.
+- **topics** -- Free-form tags for discoverability.
+
+This frontmatter makes it possible to discover which ADRs relate to a given
+problem area without manually maintaining cross-reference lists.
+
 ADR linting is borrowed from the
 [konflux-ci/architecture](https://github.com/konflux-ci/architecture) repo and
-runs in CI to validate statuses and number uniqueness.
+runs in CI to validate statuses, number uniqueness, and frontmatter correctness
+(including cross-references to problem docs).
 
 ## Consequences
 

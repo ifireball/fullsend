@@ -1,3 +1,12 @@
+---
+title: "NUMBER. TITLE"
+status: Proposed | Undecided | Accepted | Deprecated | Superseded
+relates_to:
+  - problem-doc-name  # filename without .md from docs/problems/
+topics:
+  - topic-tag
+---
+
 # NUMBER. TITLE
 
 Date: YYYY-MM-DD
