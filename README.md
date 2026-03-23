@@ -11,10 +11,12 @@ This is not a product spec. It's an evolving exploration of a hard problem space
 ## What's here
 
 - **[docs/vision.md](docs/vision.md)** — The big picture: what we're trying to achieve and why
+- **[docs/roadmap.md](docs/roadmap.md)** — How this exploration progresses through phases
 - **[docs/problems/](docs/problems/)** — Deep dives into each major problem domain, each evolving independently:
   - [Intent Representation](docs/problems/intent-representation.md) — How do we capture, verify, and enforce what changes are wanted?
   - [Security Threat Model](docs/problems/security-threat-model.md) — Prompt injection, insider threats, agent drift, supply chain attacks
   - [Agent Architecture](docs/problems/agent-architecture.md) — What agents exist, what authority do they have, how do they interact?
+  - [Agent Infrastructure](docs/problems/agent-infrastructure.md) — Where agents run, what resources they get, 3rd party vs internal vs build our own
   - [Autonomy Spectrum](docs/problems/autonomy-spectrum.md) — When to auto-merge vs. escalate to humans
   - [Governance](docs/problems/governance.md) — Who controls the agents and their configuration?
   - [Repo Readiness](docs/problems/repo-readiness.md) — Test coverage, CI/CD maturity, what's needed before agents can be trusted
@@ -23,11 +25,17 @@ This is not a product spec. It's an evolving exploration of a hard problem space
   - [Agent-Compatible Code](docs/problems/agent-compatible-code.md) — Language properties that affect agent effectiveness
   - [Codebase Context](docs/problems/codebase-context.md) — How agents acquire codebase understanding and how to structure org-level context
   - [Downstream Contributor Priority Intake](docs/problems/downstream-contributor-priority-intake.md) — How downstream contributors express business priorities and how competing sources of strategic intent get reconciled
+  - [Human Factors](docs/problems/human-factors.md) — Domain ownership, role shift, review fatigue, and contributor motivation
+  - [Contributor Guidance](docs/problems/contributor-guidance.md) — Making contribution rules clear to both humans and machines, without requiring AI to participate
+  - [Performance Verification](docs/problems/performance-verification.md) — Catching agent-introduced performance regressions before they reach production
+  - [Production Feedback](docs/problems/production-feedback.md) — Konflux runs PipelineRuns at scale; how do platform execution signals (failure patterns, task error distributions, latency trends) feed back into what agents work on and how they assess risk
+  - [Testing the Agents](docs/problems/testing-agents.md) — CI for prompts: regression testing, eval frameworks, and behavioral verification for agent instructions
+- **[docs/ADRs/](docs/ADRs/)** — Architecture Decision Records for crystallizing specific decisions (see [ADR 0001](docs/ADRs/0001-use-adrs-for-decision-making.md))
 - **[docs/landscape.md](docs/landscape.md)** — Survey of existing AI code review tools and how they relate to our goals (time-sensitive — check the date)
-- **[docs/experiments/](docs/experiments/)** — Logs and results from trying things in practice
+- **[experiments/](experiments/)** — Logs and results from trying things in practice
 
 ## How to contribute
 
 Pick a problem area that interests you. Read the existing document. Add your perspective, propose solutions, poke holes in existing proposals. Open a PR.
 
-If you want to run an experiment — try an agent workflow in a repo, test a security guardrail, prototype an intent system — document what you did and what you learned in `docs/experiments/`.
+If you want to run an experiment — try an agent workflow in a repo, test a security guardrail, prototype an intent system — document what you did and what you learned in `experiments/`.

@@ -68,6 +68,8 @@ For some types of change this phase *could* leverage a **vibe-to-spec** workflow
 
 Any draft PR created at this stage cannot merge — it's gated on the generated feature file being in approved/. Low cost, high information value. This decouples understanding a change from authorizing a change.
 
+The exploration phase can also benefit from [dual-interpretation escalation](code-review.md#dual-interpretation-escalation): when a proposed feature has multiple plausible implementation approaches, the agent can build them as draft PRs so stakeholders compare concrete alternatives rather than debating in the abstract. Stakeholders may also reject all approaches or propose a direction the agent didn't consider.
+
 
 ### The "ship it" phase
 
@@ -97,10 +99,22 @@ Pre-authorized categories of changes that the organization always wants:
 
 - Dependency updates that pass CI
 - Linter/formatter fixes
-- Test additions that don't change production behavior
+- **Additive** test changes that don't change production behavior (see below)
 - Documentation typo fixes
 
 The intent is "we always want these." An agent verifies the change actually falls in this category (static analysis: "this change only touches test files") and no further authorization is needed.
+
+**Test changes require additive-only verification.** Not all test-only changes are Tier 0. Tests are part of the trust boundary — review agents rely on them to validate production code. A change that weakens assertions, broadens mocks, reduces coverage, or removes checks is modifying a guardrail, not adding coverage. The Tier 0 gate for test changes must verify that the change is additive:
+
+- New test files or new test functions: Tier 0
+- New assertions added to existing tests: Tier 0
+- Weakened assertions (e.g., `Equal` → `NotNil`, exact match → substring): **not Tier 0** — requires Tier 1 justification
+- Removed or commented-out test cases: **not Tier 0**
+- Mocks that replace real dependencies in security-sensitive paths: **not Tier 0**
+- Test refactoring that restructures without weakening: Tier 0, but the review agent must verify no net reduction in assertion strength
+- Binary or opaque files (`.xz`, `.bin`, encoded blobs, etc.) in test directories: **not Tier 0** — these cannot be meaningfully reviewed by agents and require human review regardless of location
+
+This distinction matters because of the [temporal split-payload attack](security-threat-model.md#cross-cutting-attack-pattern-temporal-split-payload-test-poisoning): an attacker can poison the test suite through Tier 0 test changes and later exploit the blind spot with a separate production change that passes the weakened tests. Static analysis for Tier 0 classification must go beyond "does this only touch test files?" to "does this make the test suite strictly stronger?"
 
 ### Tier 1: Tactical (issue is sufficient)
 
@@ -240,6 +254,8 @@ Review agents must independently assess what tier a change *actually* represents
 - **Impact analysis** — does this change affect security, UX, or API surface? If so, it's at least Tier 2 regardless of the issue label.
 - **Intent verification** — does the linked issue actually describe what this PR does? And does the code do exactly what the intent file says, and nothing more? The vibe-to-spec workflow gives the agent a strict checklist. If someone tries to sneak a major new feature into a low-tier bug fix, the agent will automatically block it because the extra code won't match the generated spec.
 - **Pattern detection** — multiple "small" changes from the same source that collectively add up to a feature should trigger escalation.
+
+When tier classification is genuinely ambiguous, rather than making a weak call or defaulting to escalation without context, the review agent can use [dual-interpretation escalation](code-review.md#dual-interpretation-escalation) — presenting the human with its tier readings and the evidence for each, while always leaving room for the human to see a different framing or reject the change entirely.
 
 This applies equally to review agents looking at code PRs *and* to agents evaluating intent changes in the intent repo itself. A low-tier intent statement that describes something high-impact should be flagged and escalated.
 
