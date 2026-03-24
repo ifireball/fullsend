@@ -1,17 +1,17 @@
 # Downstream/Upstream
 
-How do downstream contributors express business priorities into the Konflux open source project, and how does the project reconcile competing sources of strategic intent?
+How do downstream contributors express business priorities into an open source project, and how does the project reconcile competing sources of strategic intent?
 
 ## Why this matters now
 
-Konflux has one downstream contributor today: Red Hat. Red Hat employs most contributors, funds the infrastructure, and drives the roadmap. Red Hat's priorities become project priorities by default because nobody else is at the table.
+Many open source projects have a single dominant downstream contributor — a company that employs most contributors, funds the infrastructure, and drives the roadmap. That company's priorities become project priorities by default because nobody else is at the table.
 
-This works — until it doesn't. The project's governance structure (the elected KGC, the ADR process, open contribution) is designed to support a multi-lateral community. But there is no formal mechanism for how downstream contributor business priorities become project priorities. That gap is invisible with one downstream contributor. With two or more, it becomes the central political question of the project.
+This works — until it doesn't. A project's governance structure (elected steering committees, ADR processes, open contribution) may be designed to support a multi-lateral community. But there is often no formal mechanism for how downstream contributor business priorities become project priorities. That gap is invisible with one downstream contributor. With two or more, it becomes the central political question of the project.
 
-Two things exist today that partially address direction-setting:
+Two things typically exist that partially address direction-setting:
 
-1. **The KGC** has formal authority over architectural decisions through ADRs. This governs the *shape* of the system — how things are built, what invariants hold.
-2. **Feature direction** — *what* gets built and in what order — flows informally from Red Hat's internal planning. No project-level body formally owns this.
+1. **A governance body** (steering committee, technical council, etc.) has formal authority over architectural decisions. This governs the *shape* of the system — how things are built, what invariants hold.
+2. **Feature direction** — *what* gets built and in what order — flows informally from the dominant contributor's internal planning. No project-level body formally owns this.
 
 The gap between these two is where this problem lives.
 
@@ -23,13 +23,15 @@ This worked as a natural filter. Code was expensive to produce. Only well-motiva
 
 LLM-generated code breaks this model. When any contributor can produce a polished implementation for the cost of an afternoon's token budget, the filter disappears. A well-implemented PR is no longer evidence that the contributing organization made a strategic commitment — it may just mean someone had an idea and an API key.
 
+Saying "no" to a contribution has always been socially expensive — when someone invested weeks of effort, rejecting their PR felt like denying their worth. Cheap code doesn't eliminate this dynamic; it compounds it with volume. A project that must say "no" ten times a week to well-implemented but strategically misaligned contributions burns through social capital fast.
+
 This creates a new problem: the project must now evaluate contributions against strategic intent, not just technical quality. "Done" is no longer evidence that something "should be done." Without an explicit priority mechanism, the project risks accepting well-crafted contributions that warp its shape in ways no stakeholder actually intended.
 
 ## Models for priority intake
 
 ### Model A: Single central list
 
-All contributors play in one priority list with no special treatment for downstream contributor organizations. Anyone proposes features through the same process — for example, the intent repo's `proposed/` directory described in [intent-representation.md](intent-representation.md). The KGC or an equivalent body authorizes what moves forward.
+All contributors play in one priority list with no special treatment for downstream contributor organizations. Anyone proposes features through the same process — for example, an intent repo's `proposed/` directory as described in [intent-representation.md](intent-representation.md). The governance body authorizes what moves forward.
 
 Downstream contributor PMs and architects have no formal standing in the project. They are contributors like anyone else. Their influence comes from the quality of their proposals, not their employer.
 
@@ -44,7 +46,7 @@ Downstream contributor PMs and architects have no formal standing in the project
 
 ### Model B: Federated priority lists with reconciliation
 
-Each contributing organization maintains its own priority list. A reconciliation process — run by the KGC, a priority council, or a rotating chair — merges these into a project roadmap. Conflicts surface explicitly rather than through informal politics.
+Each contributing organization maintains its own priority list. A reconciliation process — run by the governance body, a priority council, or a rotating chair — merges these into a project roadmap. Conflicts surface explicitly rather than through informal politics.
 
 **Strengths:**
 - Acknowledges that downstream contributors have distinct business needs
@@ -58,23 +60,23 @@ Each contributing organization maintains its own priority list. A reconciliation
 
 ### Model C: Downstream contributor priorities as input, project priorities as output
 
-Downstream contributors submit priority requests, but the project maintains its own independent priority list owned by the KGC. Downstream contributor input is one signal among several — community demand, technical debt, security needs, architectural health. An explicit insulating layer separates downstream contributor priorities from project priorities.
+Downstream contributors submit priority requests, but the project maintains its own independent priority list owned by the governance body. Downstream contributor input is one signal among several — community demand, technical debt, security needs, architectural health. An explicit insulating layer separates downstream contributor priorities from project priorities.
 
 The project can say "no" to a downstream contributor priority that would fragment the codebase or conflict with architectural invariants. Downstream contributors accept that their priorities are requests, not directives.
 
 **Strengths:**
-- Protects project coherence — the KGC can reject priorities that would fragment the project
+- Protects project coherence — the governance body can reject priorities that would fragment the project
 - Balances business needs against project health
 - Makes the insulating layer explicit rather than pretending it doesn't exist
 
 **Weaknesses:**
 - Downstream contributors may feel they lack influence proportional to their investment
 - The insulating layer could become a bottleneck or a political arena
-- Requires the KGC (or a delegated body) to make judgment calls that will sometimes displease major funders
+- Requires the governance body (or a delegated group) to make judgment calls that will sometimes displease major funders
 
 ### Model D: Contribution-weighted influence (current state)
 
-No formal priority mechanism. What gets built is what someone builds. This is the current state of Konflux and the default state of most open source projects — and the model that LLM-generated code is disrupting (see previous section).
+No formal priority mechanism. What gets built is what someone builds. This is the default state of most open source projects — and the model that LLM-generated code is disrupting (see previous section).
 
 **Strengths:**
 - Zero overhead
@@ -93,23 +95,17 @@ No model eliminates all failure modes. The choice is which failures you structur
 
 Multiple downstream contributors pull the project in incompatible directions. Under Model A, this manifests as competing feature proposals that can't coexist architecturally. Under Model B, reconciliation fails to find common ground and both features get built, creating maintenance burden and confused users. Under Model C, the insulating layer picks winners and losers, and losers may fork.
 
-The KGC's existing ADR authority provides some defense — architectural invariants constrain the design space — but ADRs govern structure, not feature direction. Two features can each be architecturally sound while still being strategically incompatible.
+A governance body's existing architectural authority provides some defense — architectural invariants constrain the design space — but architectural decisions govern structure, not feature direction. Two features can each be architecturally sound while still being strategically incompatible.
 
 ### Capture
 
-The largest contributor dominates regardless of formal structure. Under Model A, they outnumber others in proposals and discussion. Under Model B, their priority list is longest and their reconciliation leverage is greatest. Under Model C, the KGC members are mostly employed by the dominant downstream contributor, and the "insulating layer" insulates in name only.
+The largest contributor dominates regardless of formal structure. Under Model A, they outnumber others in proposals and discussion. Under Model B, their priority list is longest and their reconciliation leverage is greatest. Under Model C, the governance body members are mostly employed by the dominant downstream contributor, and the "insulating layer" insulates in name only.
 
 Capture is the hardest failure mode to prevent structurally because it reflects real power dynamics. Formal rules help, but only if the community is willing to enforce them against its largest funder.
 
 ### Gridlock
 
-Requiring multi-lateral consensus stalls decision-making. Most acute under Model B, where reconciliation can deadlock. Model C mitigates this by giving the KGC final authority, but at the cost of downstream contributor buy-in — a downstream contributor that gets overruled repeatedly may stop investing.
-
-### Rejection cost
-
-Saying "no" to a contribution has always been socially expensive. When someone invested weeks of effort, rejecting their PR felt like denying their worth. Cheap code doesn't eliminate this dynamic — it shifts it. The contributor behind an agent-generated PR may not have invested much time, but the rejection still stings because it's a rejection of their *idea*, not their labor. And the volume problem compounds it: a project that must say "no" ten times a week to well-implemented but unwanted contributions burns through social capital fast.
-
-This is most acute under Models A and C, where a formal body must repeatedly tell contributors — including major funders — that their priorities don't align with the project's.
+Requiring multi-lateral consensus stalls decision-making. Most acute under Model B, where reconciliation can deadlock. Model C mitigates this by giving the governance body final authority, but at the cost of downstream contributor buy-in — a downstream contributor that gets overruled repeatedly may stop investing.
 
 ### Freeloading
 
@@ -125,35 +121,18 @@ When agents can implement a proposed feature in hours rather than weeks, the vol
 
 The intent system's `proposed/` to `approved/` workflow assumes someone is filtering proposals. The priority intake model determines who that someone is and what criteria they use.
 
-### Project-operated vs. contributor-operated agents
-
-Not all agent work draws from a shared resource pool. The priority question looks different depending on who operates the agents.
-
-**Project-operated agents** — code review agents, CI/gating agents, backlog triage agents — run on project infrastructure and consume a shared token budget. These are scarce resources that require central management. The KGC (or a delegated body) must own the priority queue for project-operated agents because they represent project authority: what gets reviewed, what gets tested, what gets merged.
-
-**Contributor-operated agents** — implementation agents, exploratory prototyping agents, triage assistants — run on the contributor's own infrastructure with their own token budget. A downstream contributor directing their own agents to produce PRs is not consuming a shared resource. They're just submitting contributions, the same as any human contributor with an IDE.
-
-This distinction reframes the problem. For contributor-operated agents, the scarce resource is not tokens — it's *reviewer attention and CI capacity*. A downstream contributor who floods the project with agent-generated PRs isn't spending the project's money, but they are spending the project's time. The priority intake question for contributor-operated agents is really a *review intake* question: how does the project manage the volume and ensure that review bandwidth is spent on contributions aligned with project priorities?
-
-The contributor ladder applies here. An agent (or its operator) that consistently produces work aligned with project priorities and architectural invariants earns trust — faster review, CI checks enabled by default, eventually reduced oversight. A new contributor's agent gets the same treatment as any new contributor: explicit approval required for CI, closer review scrutiny, slower path to merge. "Earning trust" in an agentic world may mean demonstrating that your agent understands the project's stated priorities, not just that you showed up.
-
-This connects to the backlog/priority agent described in [agent-architecture.md](agent-architecture.md), which "needs access to strategic intent to make good decisions." For project-operated agents, the priority intake model determines that agent's input directly. For contributor-operated agents, the project's role is gating — not generating — and the priority model shapes what the project is willing to review and merge.
-
 ## Relationship to other problem areas
 
 - **[Intent representation](intent-representation.md)** — This document addresses *where* strategic intent originates. Intent representation addresses *how* it gets encoded and enforced. The priority intake model feeds the intent system's `proposed/` directory. Note: intent-representation.md currently references "architects and PM" as approvers — these are downstream contributor roles with no formal standing in the project. The priority intake model must clarify how downstream contributor roles relate to project authority.
-- **[Governance](governance.md)** — The KGC's role in priority reconciliation is a governance question. This document may motivate expanding the governance discussion beyond agent policy to include feature direction authority.
+- **[Governance](governance.md)** — The governance body's role in priority reconciliation is a governance question. This document may motivate expanding the governance discussion beyond agent policy to include feature direction authority.
 - **[Agent architecture](agent-architecture.md)** — The backlog/priority agent's design depends on the priority intake model. Its inputs, its ranking criteria, and its authority to assign work all derive from decisions made here.
 - **[Autonomy spectrum](autonomy-spectrum.md)** — If different downstream contributors have different risk tolerances for agent autonomy in repos they care about, the priority model needs to account for that tension.
 
 ## Open questions
 
-- Should the KGC's mandate expand to cover feature direction, or does that need a separate body?
+- Should the governance body's mandate expand to cover feature direction, or does that need a separate body?
 - How do you prevent the reconciliation process (in Models B and C) from becoming a political arena that drives downstream contributors away?
 - If token budget is allocated by contribution, what counts as "contribution"? Code? Infrastructure? Funding? Community management?
-- How does this interact with the existing ADR process — are ADRs a subset of priority decisions, or a parallel track?
+- How does this interact with existing architectural decision processes — are they a subset of priority decisions, or a parallel track?
 - What's the minimum viable priority process for a project with one downstream contributor today that doesn't preclude multi-lateral participation later?
-- How do you detect and prevent capture when the dominant downstream contributor also employs most KGC members?
-- Contributor-operated agents can submit PRs freely, but what mechanisms prevent review-queue flooding? Rate limits? Required pre-approval of intent before submitting implementation?
-- How does the priority intake model interact with the "try it" pattern from intent-representation.md? Should contributor-operated agents be able to build exploratory draft PRs without going through the full authorization process?
-- What does "earning trust" look like for contributor-operated agents? Is it the operator's reputation, the agent's track record, or both?
+- How do you detect and prevent capture when the dominant downstream contributor also employs most governance body members?
