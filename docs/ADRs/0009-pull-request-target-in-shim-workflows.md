@@ -9,7 +9,7 @@ topics:
   - pull-request-target
 ---
 
-# 8. Use pull_request_target in shim workflows
+# 9. Use pull_request_target in shim workflows
 
 Date: 2026-04-02
 

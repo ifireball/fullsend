@@ -10,52 +10,26 @@ import (
 	"github.com/playwright-community/playwright-go"
 )
 
-// githubLogin logs into GitHub by filling in the login form programmatically.
-// This eliminates the need for stored browser sessions and manual refresh.
-func githubLogin(page playwright.Page, username, password string, logf func(string, ...any)) error {
-	if _, err := page.Goto("https://github.com/login", playwright.PageGotoOptions{
+// verifyGitHubSession checks that the browser context has a valid GitHub
+// session by navigating to a page that requires authentication. If the
+// session is expired or invalid, it returns an error.
+func verifyGitHubSession(page playwright.Page, screenshotDir string, logf func(string, ...any)) error {
+	if _, err := page.Goto("https://github.com/settings/profile", playwright.PageGotoOptions{
 		WaitUntil: playwright.WaitUntilStateDomcontentloaded,
+		Timeout:   playwright.Float(15000),
 	}); err != nil {
-		return fmt.Errorf("navigating to GitHub login: %w", err)
+		return fmt.Errorf("navigating to settings/profile: %w", err)
 	}
 
-	// Check if already logged in (redirected away from login page).
-	if !strings.Contains(page.URL(), "/login") && !strings.Contains(page.URL(), "/session") {
-		return nil
+	url := page.URL()
+	logf("[session] Verification URL: %s", url)
+
+	if strings.Contains(url, "/login") || strings.Contains(url, "/session") {
+		saveDebugScreenshot(page, screenshotDir, "session-expired", logf)
+		return fmt.Errorf("session is not authenticated: navigating to /settings/profile redirected to %s — re-export the storageState locally", url)
 	}
 
-	// Fill in credentials.
-	if err := page.Locator("#login_field").Fill(username); err != nil {
-		return fmt.Errorf("filling username: %w", err)
-	}
-	if err := page.Locator("#password").Fill(password); err != nil {
-		return fmt.Errorf("filling password: %w", err)
-	}
-
-	// Submit the form.
-	if err := page.Locator("input[type='submit'], button[type='submit']").First().Click(); err != nil {
-		return fmt.Errorf("clicking sign in: %w", err)
-	}
-
-	// Wait for navigation away from the login/session page.
-	if err := page.WaitForURL("https://github.com/**", playwright.PageWaitForURLOptions{
-		Timeout: playwright.Float(7500),
-	}); err != nil {
-		currentURL := page.URL()
-		// If still on login/session, authentication likely failed.
-		if strings.Contains(currentURL, "/login") || strings.Contains(currentURL, "/session") {
-			return fmt.Errorf("login appears to have failed, still on %s", currentURL)
-		}
-		// Navigated somewhere else — might be OK.
-	}
-
-	// Final check: make sure we're not still on a login page.
-	currentURL := page.URL()
-	if strings.Contains(currentURL, "/login") || strings.Contains(currentURL, "/sessions/two-factor") {
-		return fmt.Errorf("login incomplete, ended up at %s (2FA may be enabled)", currentURL)
-	}
-
-	logf("[login] Successfully logged in, current URL: %s", currentURL)
+	logf("[session] Session is valid")
 	return nil
 }
 

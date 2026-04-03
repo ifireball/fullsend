@@ -32,11 +32,21 @@ func createPAT(page playwright.Page, note string, logf func(string, ...any)) (st
 	}
 	logf("[pat] Navigated to: %s", page.URL())
 
+	// If we got redirected to login, the session isn't valid.
+	if strings.Contains(page.URL(), "/login") {
+		pageTitle, _ := page.Title()
+		logf("[pat] ERROR: redirected to login page. Title: %s", pageTitle)
+		return "", fmt.Errorf("redirected to login when accessing token page (URL: %s) — session is not authenticated", page.URL())
+	}
+
 	// Verify we're on the right page.
 	if err := page.Locator("#oauth_access_description").WaitFor(playwright.LocatorWaitForOptions{
 		Timeout: playwright.Float(5000),
 	}); err != nil {
-		return "", fmt.Errorf("token creation form not found (may not be logged in): %w", err)
+		pageTitle, _ := page.Title()
+		pageURL := page.URL()
+		logf("[pat] ERROR: form not found. URL=%s Title=%s", pageURL, pageTitle)
+		return "", fmt.Errorf("token creation form not found at %s (title: %s): %w", pageURL, pageTitle, err)
 	}
 
 	// Fill in the token note/description.

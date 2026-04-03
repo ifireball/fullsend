@@ -23,8 +23,27 @@ jobs:
         with:
           go-version-file: go.mod
 
+      - name: Install Playwright system dependencies
+        run: npx playwright install-deps chromium
+
+      - name: Decode session
+        run: |
+          SESSION_FILE="${RUNNER_TEMP}/github-session.json"
+          printf '%s' "$E2E_GITHUB_SESSION_B64" | base64 -d > "$SESSION_FILE"
+          echo "E2E_GITHUB_SESSION_FILE=${SESSION_FILE}" >> "$GITHUB_ENV"
+        env:
+          E2E_GITHUB_SESSION_B64: ${{ secrets.E2E_GITHUB_SESSION }}
+
       - name: Run e2e tests
         run: make e2e-test
         env:
-          E2E_GITHUB_USERNAME: ${{ secrets.E2E_GITHUB_USERNAME }}
-          E2E_GITHUB_PASSWORD: ${{ secrets.E2E_GITHUB_PASSWORD }}
+          E2E_SCREENSHOT_DIR: ${{ runner.temp }}/e2e-screenshots
+
+      - name: Upload debug screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-screenshots
+          path: ${{ runner.temp }}/e2e-screenshots/
+          if-no-files-found: ignore
+          retention-days: 5

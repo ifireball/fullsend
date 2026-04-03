@@ -43,7 +43,10 @@ func setupE2ETest(t *testing.T) *e2eEnv {
 	}
 
 	cfg := loadEnvConfig(t)
-	screenshotDir := "/workspaces/fullsend/.playwright"
+	screenshotDir := os.Getenv("E2E_SCREENSHOT_DIR")
+	if screenshotDir == "" {
+		screenshotDir = "/workspaces/fullsend/.playwright"
+	}
 	_ = os.MkdirAll(screenshotDir, 0o755)
 
 	// --- Playwright setup ---
@@ -61,18 +64,20 @@ func setupE2ETest(t *testing.T) *e2eEnv {
 	require.NoError(t, err, "launching Playwright browser")
 	t.Cleanup(func() { _ = browser.Close() })
 
-	browserCtx, err := browser.NewContext()
-	require.NoError(t, err, "creating browser context")
+	// Load pre-authenticated session via storageState (ADR 0010).
+	t.Logf("Loading browser session from %s", cfg.sessionFile)
+	browserCtx, err := browser.NewContext(playwright.BrowserNewContextOptions{
+		StorageStatePath: playwright.String(cfg.sessionFile),
+	})
+	require.NoError(t, err, "creating browser context with storageState")
 	t.Cleanup(func() { _ = browserCtx.Close() })
 
 	page, err := browserCtx.NewPage()
 	require.NoError(t, err, "creating Playwright page")
 
-	// Log into GitHub programmatically.
-	t.Log("Logging into GitHub...")
-	err = githubLogin(page, cfg.username, cfg.password, t.Logf)
-	require.NoError(t, err, "logging into GitHub")
-	t.Logf("Post-login URL: %s", page.URL())
+	// Verify the session is valid by navigating to a page that requires auth.
+	err = verifyGitHubSession(page, screenshotDir, t.Logf)
+	require.NoError(t, err, "verifying GitHub session — session may be expired, re-export it locally")
 
 	// Generate a PAT for API access.
 	patNote := fmt.Sprintf("fullsend-e2e-%d", time.Now().Unix())

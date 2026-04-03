@@ -9,7 +9,6 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"strings"
 	"testing"
 	"time"
 
@@ -43,8 +42,7 @@ var defaultRoles = []string{"fullsend", "triage", "coder", "review"}
 
 // envConfig holds required environment configuration.
 type envConfig struct {
-	username    string
-	password    string
+	sessionFile string
 	lockTimeout time.Duration
 }
 
@@ -54,24 +52,12 @@ type envConfig struct {
 func loadEnvConfig(t *testing.T) envConfig {
 	t.Helper()
 
-	username := os.Getenv("E2E_GITHUB_USERNAME")
-	if username == "" {
-		t.Skip("E2E_GITHUB_USERNAME not set, skipping e2e test")
+	sessionFile := os.Getenv("E2E_GITHUB_SESSION_FILE")
+	if sessionFile == "" {
+		t.Skip("E2E_GITHUB_SESSION_FILE not set, skipping e2e test")
 	}
-
-	password := os.Getenv("E2E_GITHUB_PASSWORD")
-	if password == "" {
-		// Fall back to reading from E2E_GITHUB_PASSWORD_FILE if set.
-		if path := os.Getenv("E2E_GITHUB_PASSWORD_FILE"); path != "" {
-			data, err := os.ReadFile(path)
-			if err != nil {
-				t.Fatalf("E2E_GITHUB_PASSWORD_FILE set to %q but could not read: %v", path, err)
-			}
-			password = strings.TrimSpace(string(data))
-		}
-	}
-	if password == "" {
-		t.Skip("E2E_GITHUB_PASSWORD not set (and E2E_GITHUB_PASSWORD_FILE not available), skipping e2e test")
+	if _, err := os.Stat(sessionFile); err != nil {
+		t.Fatalf("E2E_GITHUB_SESSION_FILE %q does not exist: %v", sessionFile, err)
 	}
 
 	lockTimeout := defaultLockTimeout
@@ -84,8 +70,7 @@ func loadEnvConfig(t *testing.T) envConfig {
 	}
 
 	return envConfig{
-		username:    username,
-		password:    password,
+		sessionFile: sessionFile,
 		lockTimeout: lockTimeout,
 	}
 }
