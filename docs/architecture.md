@@ -2,6 +2,13 @@
 
 What are the components of the agent execution stack?
 
+> **This is a living document.** It must always reflect the current state of
+> architectural decisions. When an ADR is accepted (or superseded), this
+> document is updated to match. ADRs are point-in-time records and are not
+> modified after acceptance; this document is where the *current* truth lives.
+> A reader should be able to understand the system's architecture from this
+> document alone, without tracing a chain of ADRs.
+
 This document names the parts of the system without deciding how they work. It establishes shared vocabulary that the [problem documents](problems/) can reference when discussing design choices. Each component gets a responsibility statement and open questions — implementation decisions live in the problem docs and will crystallize into [ADRs](ADRs/) as they mature.
 
 This is not exhaustive. Not every problem doc maps to a component here, and not every component here has a corresponding problem doc yet.
@@ -14,11 +21,19 @@ This is the "where do agents physically run" question — whether that's a manag
 
 Infrastructure platform choice and configuration are specified in the adopting organization's **`.fullsend`** repository. (See [ADR 0003](ADRs/0003-org-config-repo-convention.md).)
 
+**Decided:**
+
+- Forge abstraction: all forge operations go through the `forge.Client` interface, keeping the rest of the codebase forge-agnostic ([ADR 0005](ADRs/0005-forge-abstraction-layer.md)).
+- Installation model: ordered layer stack (install forward, uninstall reverse, analyze for status reporting) with idempotent operations ([ADR 0006](ADRs/0006-ordered-layer-model.md)).
+- Cross-repo dispatch: `workflow_dispatch` with an org-level dispatch token replaces `workflow_call`, keeping App PEM secrets in the config repo ([ADR 0008](ADRs/0008-workflow-dispatch-for-cross-repo-dispatch.md)).
+- Shim workflow security: `pull_request_target` prevents PR authors from modifying the shim to exfiltrate the dispatch token ([ADR 0009](ADRs/0009-pull-request-target-in-shim-workflows.md)).
+
 **Open questions:**
 
 - Do we adopt a 3rd party platform, use existing internal infrastructure, or build our own? (See [agent-infrastructure.md](problems/agent-infrastructure.md) for the three directions.)
 - Can different agent types (short-lived review vs. long-running implementation) run on different infrastructure?
 - Who in the org owns and operates this, and how does it relate to existing platform or CI ownership?
+- Should model and MCP (or other tool-protocol) traffic from agent runtimes go through a **shared gateway** for authentication, spend limits, allowlists, and telemetry? (See [landscape.md](landscape.md#agent-gateway).)
 
 ## Agent Sandbox
 
@@ -26,12 +41,14 @@ The isolation boundary around a running agent. Responsible for filesystem access
 
 The sandbox is a security primitive. Its job is containment: if an agent is compromised or misbehaves, the blast radius is limited to what the sandbox permits.
 
+Ecosystem projects reuse the word *sandbox* for different workload shapes. For example, [Kubernetes SIG Agent Sandbox](https://github.com/kubernetes-sigs/agent-sandbox) targets **stateful, singleton** agent runtimes (long-lived sessions), whereas many fullsend-style workflows emphasize **short-lived, task-scoped** runs with tight isolation and observability. How those patterns compare is discussed in [agent-infrastructure.md](problems/agent-infrastructure.md#kubernetes-sig-agent-sandbox).
+
 Sandbox defaults (network policy, filesystem restrictions) are configured in the adopting organization's **`.fullsend`** repository and can be overridden per-repo. (See [ADR 0003](ADRs/0003-org-config-repo-convention.md).)
 
 **Open questions:**
 
 - What is the right isolation level — process, container, microVM, or separate cluster? (See [agent-infrastructure.md](problems/agent-infrastructure.md) and [security-threat-model.md](problems/security-threat-model.md).)
-- How granular is network regulation? Allowlist of endpoints, or coarser controls?
+- How granular is network regulation? Allowlist of endpoints, or coarser controls? (A **protocol gateway** toward approved model and MCP endpoints is one way to narrow egress without handing agents raw internet access; see [landscape.md](landscape.md#agent-gateway).)
 - Does the sandbox provide a pre-built environment (tools, language runtimes, repo clones), or does the agent set up its own workspace within the sandbox?
 - Is the sandbox the same for all agent roles, or does each role get a differently-scoped sandbox?
 
@@ -68,14 +85,18 @@ The system that gives agents credentials to act on external services. Responsibl
 
 Identity is not the same as trust. An agent's identity lets it authenticate to external services; the trust model is defined by repository permissions and CODEOWNERS, not by which credentials the agent holds. (See [agent-architecture.md](problems/agent-architecture.md) — "trust derives from repository permissions, not agent identity.")
 
+**Decided:**
+
+- Per-role GitHub Apps with manifest-based creation. Each agent role gets its own app with scoped permissions. PEMs stored as repo secrets on `.fullsend` ([ADR 0007](ADRs/0007-per-role-github-apps.md)).
+
 One concrete implementation option is [`oidcx`](https://github.com/oxidecomputer/oidcx): a service that accepts OIDC identity tokens and exchanges them for short-lived access tokens. It can mint tokens scoped to selected GitHub repositories and permissions, or to selected Oxide silos and permissions, and it also ships with a GitHub Action wrapper. In a Fullsend deployment, this can be used by the sandbox entrypoint to narrow a broad GitHub App identity down to only the specific permissions an agent needs for the current run.
 
 **Open questions:**
 
-- What identity model fits best — separate bot accounts per agent role, a single bot account with role metadata, GitHub App installations, or something else? (See [agent-architecture.md](problems/agent-architecture.md).)
-- How are credentials scoped so that agents only get the permissions they need?
+- ~~What identity model fits best — separate bot accounts per agent role, a single bot account with role metadata, GitHub App installations, or something else?~~ Decided in [ADR 0007](ADRs/0007-per-role-github-apps.md).
 - How are credentials rotated and revoked, and who has authority to do that?
 - Does the identity provider integrate with existing secrets management, or is it a new system?
+- How will per-role identity work on GitLab and Forgejo, which lack GitHub's app manifest flow?
 
 ## Work Coordinator
 

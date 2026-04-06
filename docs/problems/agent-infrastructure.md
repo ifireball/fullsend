@@ -73,11 +73,38 @@ Agents are often discussed as if they run on a developer workstation: fast local
 
 - **Compute held open for human latency** — A long-lived pod that **blocks on PR approval, architecture sign-off, or escalation** consumes cluster quota and cost while idle. That misaligns with typical “always-on service” defaults. Better fits include **event-driven** scheduling (wake on comment or approval), aggressive scale-to-zero, or separating **planning** from **execution** so capacity is not reserved across human response times; see [human-factors.md](human-factors.md) and [autonomy-spectrum.md](autonomy-spectrum.md).
 
+## Ambient Code Platform (ACP)
+
+[Ambient Code Platform](https://github.com/ambient-code/platform) is a Kubernetes-native stack (API, operator, runner pods) for agentic sessions—aligned in spirit with “ambient,” CR-driven agent workloads on a cluster.
+
+**Fit for fullsend (discussion notes):** For the **reliability, security, and scale** problems we care about most, ACP’s relevance is **limited** on its own. The points below are working notes for comparison against [security-threat-model.md](security-threat-model.md) and the isolation goals in this document—not a final product verdict.
+
+- **Extra control plane** — Agent execution depends on an **additional controller** (operator) on top of baseline cluster operations. That adds components to run, upgrade, and troubleshoot when we already care about operational simplicity and blast radius.
+- **UI- and chat-centric design** — The architecture appears oriented toward **interactive sessions and a web UI**, not first-class **automation from SCM or issue-tracker events** (webhooks, PR lifecycle, ticket transitions). For event-driven, repo-coordinated agents, that center of gravity is a poor fit unless we add substantial glue.
+- **Parallel CR surface vs existing pipeline stacks** — ACP introduces its **own custom resources** and operator workflow. That **complicates integration** with established Kubernetes CI patterns—e.g. **Tekton** `PipelineRun` / `TaskRun`—where we would rather compose agent steps next to builds and tests instead of maintaining a second orchestration vocabulary.
+- **Shared workspace** — **Multiple agents can occupy the same workspace**, which weakens separation between sessions. Untrusted content from one run can more easily influence another (cross-session **prompt injection** and lateral narrative control). That cuts against strong per-agent boundaries called out in the threat model (agent-to-agent trust and isolation).
+- **Plain Pod execution** — Agents run as **ordinary Pods**, which makes **heavier or privileged workflows** awkward without further design—e.g. **building container images** (nested builds, dedicated builders, or image build policies) usually need more than a standard agent Pod out of the box.
+
+ACP may still be useful for **narrow experiments** where those constraints are acceptable; it does not, by itself, deliver the isolation depth, supply-chain posture, or “agent as first-class workload with the right capabilities” that we are trying to reach here.
+
 ## Hybrid and incremental options
 
 - **Thin orchestration layer** — We build a small layer that triggers agents, gathers results, and posts status checks; the actual compute is 3rd party or internal. This keeps coordination logic in our control while deferring platform choice.
 - **Phase by phase** — Start with a 3rd party or internal option for early experiments (e.g. review agents only); decide later whether to replace or extend with custom infrastructure as autonomy expands.
 - **By agent type** — Triage and review agents might run on one platform (e.g. event-driven, short-lived); implementation agents that need more tooling and longer runs might need a different environment.
+
+## Kubernetes SIG Agent Sandbox
+
+[Agent Sandbox](https://github.com/kubernetes-sigs/agent-sandbox) ([project site](https://agent-sandbox.sigs.k8s.io)) is a Kubernetes SIG project for managing **isolated, stateful, singleton** workloads — a natural fit when an agent runtime should behave like one durable pod per user or session (for example a long-running interactive environment).
+
+Whether a workload is “short” or “long” in wall-clock time is not the whole story. The more useful distinction for fullsend is **what the project optimizes for** versus what we need for repo-scoped automation:
+
+- **Stateful singleton semantics** — The project centers on controller-level lifecycle and scheduling patterns aligned with **persistent, one-at-a-time** workloads, not on replacing ephemeral CI-style jobs.
+- **Isolation as a separate concern** — Strong execution isolation (for example microVM-class boundaries) is largely **deferred to complementary mechanisms** such as [Kata Containers](https://katacontainers.io/), rather than being the main deliverable of the Agent Sandbox controller itself.
+- **Pipeline composition** — The project’s **Custom Resources** and controller lifecycle are a distinct orchestration surface. That extra CR layer makes it **difficult to integrate** Agent Sandbox cleanly into workflows already expressed in [Tekton](https://tekton.dev/)–style pipelines **triggered from SCM events** (for example pull requests or pushes), where agent work would more naturally appear as short-lived `Task` runs alongside build and test steps.
+- **Observability** — The SIG project does **not** currently provide observability features that map to what we need; per-run attribution, auditability, and agent-action telemetry would still have to come from **other** stack choices.
+
+Many fullsend scenarios skew toward **ephemeral, task-scoped** execution (triage an issue, prepare a PR, run a review) where **isolation and observability** are first-class requirements for each run. That overlap in vocabulary (“sandbox”) does not guarantee overlap in requirements: Agent Sandbox is a relevant data point for organizations standardizing **long-lived, Kubernetes-hosted** agent sessions; it is less directly aimed at **event-driven, short-lived** agent jobs unless we compose it with **separate** isolation, telemetry, and pipeline integration layers.
 
 ## Relationship to other problem areas
 
@@ -94,3 +121,4 @@ Agents are often discussed as if they run on a developer workstation: fast local
 - How do we compare 3rd party vs internal vs build-our-own on concrete criteria: cost, time to first agent, compliance, and alignment with our security and coordination model?
 - Who in the org would own and operate agent infrastructure, and how does that align with existing platform or CI ownership?
 - For cluster-hosted agents, how do we preserve an acceptable inner loop (fast local or sandboxed tests) without granting dangerous privilege, and how do we avoid paying for idle capacity while work waits on humans?
+- For Kubernetes-hosted agents, how do upstream lifecycle controllers (for example [SIG Agent Sandbox](https://github.com/kubernetes-sigs/agent-sandbox)) fit alongside ephemeral task runners, and what stack (isolation runtime, telemetry, policy) must wrap them to meet our threat model?
