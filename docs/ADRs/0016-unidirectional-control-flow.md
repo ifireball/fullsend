@@ -111,7 +111,7 @@ Control flows strictly downward through the execution stack:
 Agent Dispatch → Agent Infrastructure → Agent Sandbox → Agent Harness → Agent Runtime
 ```
 
-No layer may influence, configure, or depend on layers above it:
+No layer may directly influence, configure, or depend on layers above it:
 
 - The **agent runtime** cannot modify the harness (its own system prompt,
   skills, tool definitions).
@@ -134,6 +134,13 @@ and constraints. It does not prohibit upward **data flow**:
 - **Permitted (upward data flow):** Telemetry, logs, traces, and failure signals
   flowing from any layer to Observability. Exit codes and error messages
   indicating failure. Forge comments explaining what an agent could not do.
+- **Permitted (indirect influence via the forge):** An agent runtime may propose
+  changes to its own harness — for example, improving a skill or suggesting a
+  new tool — by submitting a PR through the forge. This is normal tool use, not
+  upward control flow: the change goes through the standard review process
+  (CODEOWNERS, human approval) and takes effect in a *future* invocation, not
+  the current one. The runtime's own execution environment is unchanged. (See
+  [Story 8: Feedback Loop into Harness](https://github.com/fullsend-ai/fullsend/issues/131).)
 
 This distinction matters because Observability inherently collects data from
 every layer in the stack — that is its job. The rule prohibits a layer from
