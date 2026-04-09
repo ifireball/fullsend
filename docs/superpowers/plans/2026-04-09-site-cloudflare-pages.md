@@ -1,14 +1,14 @@
-# Mindmap → Cloudflare Pages (fork-safe CI) Implementation Plan
+# Documentation site → Cloudflare Pages (fork-safe CI) Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Replace GitHub Pages mindmap deploy with Cloudflare Pages (production + per-PR previews), using a secretless build workflow plus a `workflow_run` deploy workflow that holds Cloudflare and GitHub Deployment credentials, including `site-preview` / `site-production` environments and an upserted PR comment.
+**Goal:** Replace GitHub Pages site deploy with Cloudflare Pages (production + per-PR previews), using a secretless build workflow plus a `workflow_run` deploy workflow that holds Cloudflare and GitHub Deployment credentials, including `site-preview` / `site-production` environments and an upserted PR comment. Naming uses **site** throughout (workflows, artifact); the mindmap is the current `index.html` source only.
 
-**Architecture:** `Build Document Mindmap` runs on `pull_request` and `push` to `main` (path-filtered), checks out the PR head SHA on PRs, copies `docs/mindmap.html` to `_site/index.html`, uploads artifact `mindmap-site`. `Deploy Document Mindmap` runs on successful completion of that workflow, downloads the artifact by run id, runs `wrangler pages deploy` via `cloudflare/wrangler-action@v3.14.1`, then uses `actions/github-script` to create a GitHub Deployment + success status (`environment_url` from Wrangler outputs) and upsert a preview PR comment when the triggering event was `pull_request`.
+**Architecture:** **`Build Site`** runs on `pull_request` and `push` to `main` (path-filtered), checks out the PR head SHA on PRs, produces `_site/` (today: copy `docs/mindmap.html` → `index.html`), uploads artifact **`site`**. **`Deploy Site`** runs on successful completion of that workflow, downloads the artifact by run id, runs `wrangler pages deploy` via `cloudflare/wrangler-action@v3.14.1`, then uses `actions/github-script` to create a GitHub Deployment + success status (`environment_url` from Wrangler outputs) and upsert a preview PR comment when the triggering event was `pull_request`.
 
 **Tech Stack:** GitHub Actions, Cloudflare Pages (direct upload), Wrangler (`cloudflare/wrangler-action@v3.14.1`), `actions/github-script@v8`, REST Deployments API.
 
-**Spec:** [2026-04-09-mindmap-cloudflare-pages-design.md](../specs/2026-04-09-mindmap-cloudflare-pages-design.md)
+**Spec:** [2026-04-09-site-cloudflare-pages-design.md](../specs/2026-04-09-site-cloudflare-pages-design.md)
 
 ---
 
@@ -16,10 +16,10 @@
 
 | File | Role |
 |------|------|
-| `.github/workflows/mindmap-build.yml` | Secretless build + `mindmap-site` artifact |
-| `.github/workflows/mindmap-deploy.yml` | Artifact download, Wrangler deploy, GitHub Deployment + PR comment |
-| `.github/workflows/mindmap.yml` | **Remove** (replaced by the two workflows above) |
-| `docs/mindmap-deployment.md` | Operator runbook: Cloudflare project, token scopes, GitHub secrets/variables, fork policy, troubleshooting, phase 2 / `konflux.sh` follow-up |
+| `.github/workflows/site-build.yml` | Secretless build + artifact `site` |
+| `.github/workflows/site-deploy.yml` | Artifact download, Wrangler deploy, GitHub Deployment + PR comment |
+| `.github/workflows/site-github-pages.yml` | **Remove** at cutover (replaced by the two workflows above; legacy GitHub Pages) |
+| `docs/site-deployment.md` | Operator runbook: Cloudflare project, token scopes, GitHub secrets/variables, fork policy, troubleshooting, phase 2 / `konflux.sh` follow-up |
 
 ---
 
@@ -27,14 +27,14 @@
 
 **Files:**
 
-- Create: `.github/workflows/mindmap-build.yml`
+- Create: `.github/workflows/site-build.yml`
 
 - [ ] **Step 1: Create the workflow file**
 
 Use this exact content (pin `actions/checkout` to `v6.0.2` to match other workflows in this repo):
 
 ```yaml
-name: Build Document Mindmap
+name: Build Site
 
 on:
   pull_request:
@@ -49,7 +49,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: mindmap-build-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: site-build-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -67,7 +67,7 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: mindmap-site
+          name: site
           path: _site/
           retention-days: 5
 ```
@@ -75,8 +75,8 @@ jobs:
 - [ ] **Step 2: Commit**
 
 ```bash
-git add .github/workflows/mindmap-build.yml
-git commit -m "ci: add mindmap build workflow for Cloudflare handoff"
+git add .github/workflows/site-build.yml
+git commit -m "ci: add site build workflow for Cloudflare handoff"
 ```
 
 ---
@@ -85,7 +85,7 @@ git commit -m "ci: add mindmap build workflow for Cloudflare handoff"
 
 **Files:**
 
-- Create: `.github/workflows/mindmap-deploy.yml`
+- Create: `.github/workflows/site-deploy.yml`
 
 - [ ] **Step 1: Create the workflow file**
 
@@ -94,11 +94,11 @@ The job must only run for successful runs of **this repository’s** build workf
 Use this exact content:
 
 ```yaml
-name: Deploy Document Mindmap
+name: Deploy Site
 
 on:
   workflow_run:
-    workflows: [Build Document Mindmap]
+    workflows: [Build Site]
     types: [completed]
 
 permissions:
@@ -108,7 +108,7 @@ permissions:
   pull-requests: write
 
 concurrency:
-  group: mindmap-deploy-${{ github.event.workflow_run.event }}-${{ github.event.workflow_run.head_repository.owner.login }}-${{ github.event.workflow_run.head_branch }}
+  group: site-deploy-${{ github.event.workflow_run.event }}-${{ github.event.workflow_run.head_repository.owner.login }}-${{ github.event.workflow_run.head_branch }}
   cancel-in-progress: true
 
 jobs:
@@ -125,7 +125,7 @@ jobs:
       - name: Download build artifact
         uses: actions/download-artifact@v4
         with:
-          name: mindmap-site
+          name: site
           path: _site
           github-token: ${{ secrets.GITHUB_TOKEN }}
           run-id: ${{ github.event.workflow_run.id }}
@@ -180,7 +180,7 @@ jobs:
 
             if (!isPR) return;
 
-            const marker = '<!-- mindmap-preview -->';
+            const marker = '<!-- site-preview -->';
             let prNumber = run.pull_requests?.[0]?.number;
             if (!prNumber) {
               const head = `${run.head_repository.owner.login}:${run.head_branch}`;
@@ -200,7 +200,7 @@ jobs:
 
             const body = [
               marker,
-              '### Document mindmap preview',
+              '### Site preview',
               '',
               `**Preview:** ${url}`,
               '',
@@ -239,8 +239,8 @@ Notes baked into this YAML:
 - [ ] **Step 2: Commit**
 
 ```bash
-git add .github/workflows/mindmap-deploy.yml
-git commit -m "ci: add mindmap deploy to Cloudflare with GitHub Deployments"
+git add .github/workflows/site-deploy.yml
+git commit -m "ci: add site deploy to Cloudflare with GitHub Deployments"
 ```
 
 ---
@@ -249,17 +249,17 @@ git commit -m "ci: add mindmap deploy to Cloudflare with GitHub Deployments"
 
 **Files:**
 
-- Delete: `.github/workflows/mindmap.yml`
+- Delete: `.github/workflows/site-github-pages.yml`
 
 - [ ] **Step 1: Delete the file**
 
-Remove `.github/workflows/mindmap.yml` entirely so the mindmap is no longer deployed via `actions/deploy-pages`.
+Remove `.github/workflows/site-github-pages.yml` entirely so the site is no longer deployed via `actions/deploy-pages`.
 
 - [ ] **Step 2: Commit**
 
 ```bash
-git rm .github/workflows/mindmap.yml
-git commit -m "ci: drop GitHub Pages workflow for mindmap"
+git rm .github/workflows/site-github-pages.yml
+git commit -m "ci: drop GitHub Pages workflow for documentation site"
 ```
 
 ---
@@ -268,13 +268,13 @@ git commit -m "ci: drop GitHub Pages workflow for mindmap"
 
 **Files:**
 
-- Create: `docs/mindmap-deployment.md`
+- Create: `docs/site-deployment.md`
 
 - [ ] **Step 1: Add the runbook**
 
-Create `docs/mindmap-deployment.md` with the following sections (adjust org/repo names when copying for upstream):
+Create `docs/site-deployment.md` with the following sections (adjust org/repo names when copying for upstream):
 
-1. **Overview** — Link to the design spec `docs/superpowers/specs/2026-04-09-mindmap-cloudflare-pages-design.md` and summarize the two workflows.
+1. **Overview** — Link to the design spec `docs/superpowers/specs/2026-04-09-site-cloudflare-pages-design.md` and summarize **`Build Site`** / **`Deploy Site`**.
 2. **Cloudflare setup**
    - Create a **Pages** project for **Direct Upload** (not Git-connected CI as the source of truth; GitHub Actions uploads builds).
    - In project settings, set **production branch** to `main`.
@@ -291,19 +291,19 @@ Create `docs/mindmap-deployment.md` with the following sections (adjust org/repo
 4. **GitHub setup (upstream — phase 2)**
    - Same secrets/variables at **org or repo** level as your governance prefers.
    - Confirm the deploy workflow’s `GITHUB_TOKEN` can comment on fork PRs (`pull-requests: write` is already declared in the workflow).
-   - After cutover, **disable GitHub Pages** for this repo if it was only used for the mindmap (**Settings → Pages**).
+   - After cutover, **disable GitHub Pages** for this repo if it was only used for this site (**Settings → Pages**).
    - **Later:** attach **`konflux.sh`** (or a subdomain) in Cloudflare; production URLs in Deployments and docs will then use that hostname once Wrangler reports it (or add a note if the alias URL remains `*.pages.dev` until custom domain is primary).
 5. **Troubleshooting**
-   - **Deploy job skipped:** wrong triggering workflow name (must match `Build Document Mindmap` exactly), or `workflow_run.repository` not equal to current repo.
+   - **Deploy job skipped:** wrong triggering workflow name (must match **`Build Site`** exactly), or `workflow_run.repository` not equal to current repo.
    - **`Missing deployment URL`:** upgrade Wrangler via wrangler-action or inspect action outputs; ensure deploy step id remains `cf`.
-   - **Artifact download 404:** deploy job needs `actions: read` and correct `run-id` (already set); build must have uploaded `mindmap-site`.
+   - **Artifact download 404:** deploy job needs `actions: read` and correct `run-id` (already set); build must have uploaded artifact **`site`**.
    - **No PR comment:** `workflow_run.pull_requests` empty and `pulls.list` with `head=owner:branch` did not return exactly one open PR (document for draft PRs or unusual head branches).
 
 - [ ] **Step 2: Commit**
 
 ```bash
-git add docs/mindmap-deployment.md
-git commit -m "docs: add mindmap Cloudflare Pages operator runbook"
+git add docs/site-deployment.md
+git commit -m "docs: add documentation site Cloudflare operator runbook"
 ```
 
 ---
@@ -312,11 +312,11 @@ git commit -m "docs: add mindmap Cloudflare Pages operator runbook"
 
 **Files:** none (manual)
 
-- [ ] **Step 1: Configure Cloudflare + GitHub** per `docs/mindmap-deployment.md` on your fork.
+- [ ] **Step 1: Configure Cloudflare + GitHub** per `docs/site-deployment.md` on your fork.
 
 - [ ] **Step 2: Push a commit on `main` that touches `docs/mindmap.html`**
 
-Expected: `Build Document Mindmap` succeeds; `Deploy Document Mindmap` runs; Cloudflare production updates; GitHub shows a **Deployment** for environment **`site-production`** with `environment_url` matching the Pages URL.
+Expected: **`Build Site`** succeeds; **`Deploy Site`** runs; Cloudflare production updates; GitHub shows a **Deployment** for environment **`site-production`** with `environment_url` matching the Pages URL.
 
 - [ ] **Step 3: Open a PR (same repo) that changes `docs/mindmap.html`**
 
@@ -362,15 +362,15 @@ No TBD/TODO left in workflow YAML or task text; Wrangler action version pinned t
 
 **3. Type / naming consistency**
 
-- Single artifact name `mindmap-site` in build and deploy.
-- Build `name:` must stay **`Build Document Mindmap`** — it is the `workflow_run.workflows` filter target.
+- Single artifact name **`site`** in build and deploy.
+- Build workflow display name must stay **`Build Site`** — it is the `workflow_run.workflows` filter target.
 - Environment names exactly `site-preview` and `site-production`.
 
 **Known follow-up (optional hardening):** If `createDeployment` returns **409** for a rare duplicate ref/environment case, extend the github-script to locate the existing deployment and only create a status (not required for normal one-commit-per-deploy usage).
 
 ---
 
-**Plan complete and saved to `docs/superpowers/plans/2026-04-09-mindmap-cloudflare-pages.md`. Two execution options:**
+**Plan complete and saved to `docs/superpowers/plans/2026-04-09-site-cloudflare-pages.md`. Two execution options:**
 
 **1. Subagent-Driven (recommended)** — Dispatch a fresh subagent per task, review between tasks, fast iteration.
 
