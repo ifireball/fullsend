@@ -136,7 +136,7 @@ jobs:
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: pages deploy _site --project-name=${{ vars.CLOUDFLARE_PROJECT_NAME }} --branch=${{ env.HEAD_BRANCH }}
+          command: pages deploy _site --project-name="${{ vars.CLOUDFLARE_PROJECT_NAME }}" --branch="${{ env.HEAD_BRANCH }}"
 
       - name: GitHub Deployment + preview comment
         uses: actions/github-script@v8
