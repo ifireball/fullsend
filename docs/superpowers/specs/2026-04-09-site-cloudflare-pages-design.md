@@ -7,9 +7,9 @@ Status: Draft (brainstorm consolidated)
 
 The repository publishes a **static documentation site**. Today the primary surface is the interactive document graph in `docs/mindmap.html`; the site will likely **grow** (more pages or assets under `docs/` or a dedicated static tree). CI treats this as **one deployable site**: produce a directory (today `_site/` with `index.html` from the mindmap) and upload it.
 
-Today, [`.github/workflows/site-github-pages.yml`](../../../.github/workflows/site-github-pages.yml) deploys to **GitHub Pages** on push to `main` when `docs/mindmap.html` changes: it copies that file to `_site/index.html`, uploads the Pages artifact, and runs `actions/deploy-pages@v4`.
+**Implemented:** [`.github/workflows/site-build.yml`](../../../.github/workflows/site-build.yml) and [`.github/workflows/site-deploy.yml`](../../../.github/workflows/site-deploy.yml) deploy the site to **Cloudflare Pages** using the build → artifact → `workflow_run` deploy split described below. The previous GitHub Pages workflow (`site-github-pages.yml`) has been **removed**.
 
-GitHub Pages does not provide **per-pull-request preview URLs** in the same way Cloudflare Pages does. The team wants **preview deployments for PRs**, including PRs **from forks**, without exposing deployment credentials to untrusted workflows.
+**Operator setup:** Cloudflare project, API token, and GitHub Actions secrets/variables are still required before deploys succeed; see [`docs/site-deployment.md`](../../site-deployment.md).
 
 ## Goals
 
@@ -98,14 +98,14 @@ Naming in the GitHub UI will follow these environment names; optional **GitHub E
 
 ### Removal of GitHub Pages for this site
 
-- Remove **`site-github-pages.yml`** (or whatever the legacy GitHub Pages workflow is called at cutover) so the site is **no longer** deployed via `actions/deploy-pages` / `upload-pages-artifact`.
-- **Repository settings:** After cutover, GitHub Pages for this use case can be **disabled** upstream when maintainers agree (document in phase 2 checklist).
+- **Done:** **`site-github-pages.yml`** was removed; the site is **no longer** deployed via `actions/deploy-pages` / `upload-pages-artifact`.
+- **Repository settings:** Disable GitHub Pages under **Settings → Pages** if it was only used for this site (upstream maintainers, phase 2).
 
 ## Rollout phases
 
 ### Phase 1 — Fork + personal Cloudflare
 
-- Add **`site-build.yml`** and **`site-deploy.yml`** on the **fork** default branch.
+- Workflows **`site-build.yml`** and **`site-deploy.yml`** are in the repository; on a **fork**, merge or cherry-pick them to the default branch if needed.
 - Create Cloudflare **Pages project** and **API token**; add **GitHub Actions secrets** on the fork.
 - Optionally attach a **demo domain** to the project.
 - Validate: **`main`** → `site-production` + production URL; **PR** (including from a test fork) → `site-preview` + preview URL + **PR comment**.
@@ -137,4 +137,4 @@ Include a runbook section covering:
 - **Consistency:** Environment names **`site-preview`** / **`site-production`**; workflows and artifact use **site** naming.
 - **Scope:** Static site packaging and CI; mindmap is the current primary page, not the name of the pipeline.
 - **Ambiguity:** “GitHub deployment environment names” are the **environment** field on the Deployments API, matching GitHub Environments if those are created with the same names.
-- **Naming revision:** Pipelines and artifacts use **site** (e.g. `Build Site`, artifact `site`, `site-github-pages.yml` for the legacy GitHub Pages workflow) so the CI names stay valid as site content grows beyond the mindmap.
+- **Naming revision:** Pipelines and artifacts use **site** (e.g. `Build Site`, artifact `site`) so the CI names stay valid as site content grows beyond the mindmap.

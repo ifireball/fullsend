@@ -18,7 +18,7 @@
 |------|------|
 | `.github/workflows/site-build.yml` | Secretless build + artifact `site` |
 | `.github/workflows/site-deploy.yml` | Artifact download, Wrangler deploy, GitHub Deployment + PR comment |
-| `.github/workflows/site-github-pages.yml` | **Remove** at cutover (replaced by the two workflows above; legacy GitHub Pages) |
+| `.github/workflows/site-github-pages.yml` | **Removed** (replaced by `site-build.yml` / `site-deploy.yml`) |
 | `docs/site-deployment.md` | Operator runbook: Cloudflare project, token scopes, GitHub secrets/variables, fork policy, troubleshooting, phase 2 / `konflux.sh` follow-up |
 
 ---
