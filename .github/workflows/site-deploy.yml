@@ -26,26 +26,73 @@ jobs:
       HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
       HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
     steps:
+      - uses: actions/checkout@v6.0.2
+
       - name: Download build artifact
         uses: actions/download-artifact@v4
         with:
           name: site
-          path: _site
+          path: site/public
           github-token: ${{ secrets.GITHUB_TOKEN }}
           run-id: ${{ github.event.workflow_run.id }}
 
-      - name: Deploy to Cloudflare Pages
-        id: cf
+      - name: Deploy to production (Workers + static assets)
+        id: cf-prod
+        if: github.event.workflow_run.event == 'push'
         uses: cloudflare/wrangler-action@v3.14.1
         with:
+          wranglerVersion: "4.30.0"
+          workingDirectory: site
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: pages deploy _site --project-name="${{ vars.CLOUDFLARE_PROJECT_NAME }}" --branch="${{ env.HEAD_BRANCH }}"
+          command: deploy --name="${{ vars.CLOUDFLARE_PROJECT_NAME }}"
+
+      - name: Upload preview version (Workers + static assets)
+        id: cf-preview
+        if: github.event.workflow_run.event == 'pull_request'
+        uses: cloudflare/wrangler-action@v3.14.1
+        with:
+          wranglerVersion: "4.30.0"
+          workingDirectory: site
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: >-
+            versions upload
+            --name="${{ vars.CLOUDFLARE_PROJECT_NAME }}"
+            --assets public
+            --preview-alias pr-${{ github.event.workflow_run.id }}
+
+      - name: Resolve deployment URL
+        id: meta
+        if: >-
+          (steps.cf-prod.outcome == 'success' || steps.cf-preview.outcome == 'success')
+        env:
+          URL_PROD: ${{ steps.cf-prod.outputs.deployment-url }}
+          URL_PREVIEW: ${{ steps.cf-preview.outputs.deployment-url }}
+          OUT_PROD: ${{ steps.cf-prod.outputs.command-output }}
+          ERR_PROD: ${{ steps.cf-prod.outputs.command-stderr }}
+          OUT_PR: ${{ steps.cf-preview.outputs.command-output }}
+          ERR_PR: ${{ steps.cf-preview.outputs.command-stderr }}
+        run: |
+          set -euo pipefail
+          url="${URL_PROD:-}"
+          if [ -z "$url" ]; then
+            url="${URL_PREVIEW:-}"
+          fi
+          if [ -z "$url" ]; then
+            comb="${OUT_PROD:-}${ERR_PROD:-}${OUT_PR:-}${ERR_PR:-}"
+            url=$(printf '%s' "$comb" | grep -oE 'https://[a-zA-Z0-9._/?#&=%_-]+' | grep 'workers.dev' | head -1 || true)
+          fi
+          if [ -z "$url" ]; then
+            echo "::error::Could not determine Workers deployment URL from Wrangler output"
+            exit 1
+          fi
+          echo "deployment_url=$url" >> "$GITHUB_OUTPUT"
 
       - name: GitHub Deployment + preview comment
         uses: actions/github-script@v8
         env:
-          DEPLOYMENT_URL: ${{ steps.cf.outputs.deployment-alias-url || steps.cf.outputs.deployment-url }}
+          DEPLOYMENT_URL: ${{ steps.meta.outputs.deployment_url }}
         with:
           script: |
             const run = context.payload.workflow_run;
@@ -56,7 +103,7 @@ jobs:
             const environment = isPR ? 'site-preview' : 'site-production';
             const url = process.env.DEPLOYMENT_URL;
             if (!url) {
-              core.setFailed('Missing deployment URL from Wrangler outputs (deployment-alias-url / deployment-url)');
+              core.setFailed('Missing deployment URL after Workers deploy/upload');
               return;
             }
 
@@ -78,7 +125,7 @@ jobs:
               deployment_id: deploymentId,
               state: 'success',
               environment_url: url,
-              description: 'Cloudflare Pages',
+              description: 'Cloudflare Workers (static assets)',
               auto_inactive: isPR,
             });
 
