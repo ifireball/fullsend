@@ -1,6 +1,6 @@
 # Design: Documentation site on Cloudflare Pages (PR previews, fork-safe CI)
 
-Date: 2026-04-09  
+Date: 2026-04-09
 Status: Draft (brainstorm consolidated)
 
 ## Context
