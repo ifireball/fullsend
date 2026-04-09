@@ -1,49 +1,83 @@
-# Documentation site deployment (Cloudflare Pages)
+# Documentation site deployment (Cloudflare Workers)
 
 ## Overview
 
-This repository publishes a static documentation site built from `docs/mindmap.html` (copied to `_site/index.html` in CI). Deployment is driven by two GitHub Actions workflows: **Build Site** produces artifact `site` on `pull_request` and `push` to `main` when the mindmap changes; **Deploy Site** runs after a successful build via `workflow_run`, downloads that artifact, uploads to Cloudflare Pages with Wrangler, records a GitHub Deployment (`site-preview` or `site-production`), and upserts a single PR comment for previews.
+This repository publishes a static documentation site built from `docs/mindmap.html` (copied to `_site/index.html` in CI, then deployed from `site/public/`). Deployment uses **Cloudflare Workers with [static assets](https://developers.cloudflare.com/workers/static-assets/)** (not the legacy **Pages direct-upload** / `wrangler pages deploy` flow).
 
-For architecture, security boundaries, and naming conventions, see the design spec: [2026-04-09-site-cloudflare-pages-design.md](superpowers/specs/2026-04-09-site-cloudflare-pages-design.md).
+Two GitHub Actions workflows:
+
+- **Build Site** — on `pull_request` and `push` to `main`, checks out the PR head when relevant, builds `_site/`, uploads artifact **`site`**.
+- **Deploy Site** — on successful **Build Site** via `workflow_run`, checks out the repo (for [`site/wrangler.toml`](../site/wrangler.toml)), downloads the artifact into `site/public/`, then:
+  - **push to `main`:** `wrangler deploy` → production Worker traffic.
+  - **pull_request:** `wrangler versions upload --preview-alias pr-<run-id>` → preview URL on `*.workers.dev` without changing production.
+
+GitHub **Deployments** use environments **`site-preview`** and **`site-production`**; PRs also get a single upserted comment with the preview link.
+
+For architecture and naming, see [2026-04-09-site-cloudflare-pages-design.md](superpowers/specs/2026-04-09-site-cloudflare-pages-design.md) (document filename still says “pages” for history; content describes Workers).
 
 ## Cloudflare setup
 
-Create a **Cloudflare Pages** project configured for **Direct Upload**. GitHub Actions is the source of truth for builds; do not rely on Cloudflare’s Git-connected CI as the primary pipeline for this site.
+### Worker (not a Pages “project”)
 
-In the Pages project settings, set the **production branch** to `main`. Enable **preview deployments** for branches that are not production so pull requests receive distinct preview URLs.
+1. In the Cloudflare dashboard, use **Workers & Pages** → **Create** → **Create Worker** (or let the first `wrangler deploy` create it). The Worker name must match the GitHub variable below.
+2. Configure **[preview URLs](https://developers.cloudflare.com/workers/configuration/previews/)** (default on when `workers_dev` is enabled). PR builds rely on **`wrangler versions upload`** with `--preview-alias`.
+3. Optional: set a **[workers.dev](https://developers.cloudflare.com/workers/configuration/routing/workers-dev/)** subdomain for your account.
 
-Create an **API token** with at least **Account → Cloudflare Pages → Edit**. Some accounts also require **Account → Account Settings → Read** for Wrangler; add that permission if token validation fails. Store the token value in GitHub as the secret `CLOUDFLARE_API_TOKEN`.
+### API token
 
-From the Cloudflare dashboard, copy your **Account ID** and store it as the GitHub secret `CLOUDFLARE_ACCOUNT_ID`.
+Create an API token that can deploy Workers for your account, for example:
 
-Add **`CLOUDFLARE_PROJECT_NAME`** as a GitHub **Actions variable** (not a secret) whose value is exactly the Pages project name used in the dashboard. If your organization prefers this value in secrets instead, change the deploy workflow expression to use `secrets.CLOUDFLARE_PROJECT_NAME` and document that choice here for operators.
+- **Account** → **Cloudflare Workers** → **Edit** (or the “Edit Cloudflare Workers” template), and
+- **Account** → **Account Settings** → **Read** if Wrangler requires it.
 
-For a public hostname beyond the default `*.pages.dev` (for example a fork demo or later `konflux.sh`), use Pages → **Custom domains**, add the hostname, and complete the DNS steps Cloudflare provides.
+Store it as GitHub secret **`CLOUDFLARE_API_TOKEN`**. A token scoped **only** to “Cloudflare Pages — Edit” is **not** enough for `wrangler deploy` / `versions upload` on a Worker.
+
+### Account ID and Worker name
+
+- Copy **Account ID** → secret **`CLOUDFLARE_ACCOUNT_ID`**.
+- Set **`CLOUDFLARE_PROJECT_NAME`** as a GitHub **Actions variable** (same name as before for compatibility): value = **Worker name** in the dashboard. The deploy workflow passes it as `wrangler deploy --name=…` / `versions upload --name=…`.
+
+### Custom domains (e.g. fork demo or `konflux.sh`)
+
+Attach routes or custom domains to the **Worker** (Workers → your Worker → **Domains & Routes**), not to a Pages project. Production URLs in GitHub Deployments will follow the hostname Wrangler reports (often `*.workers.dev` until a custom domain is primary).
+
+### Migrating from an old Pages project
+
+If you previously used **Cloudflare Pages** with `wrangler pages deploy`, create the Worker as above, point DNS/custom hostnames to the Worker, then disable or delete the old Pages project to avoid confusion.
 
 ## GitHub fork phase 1
 
-On a **fork** used to validate the setup before upstream cutover, open the repository **Settings → Secrets and variables → Actions**. Under **Secrets**, add `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`. Under **Variables**, add `CLOUDFLARE_PROJECT_NAME` matching your Cloudflare project name.
+On a **fork**, open **Settings → Secrets and variables → Actions**. Add secrets **`CLOUDFLARE_API_TOKEN`**, **`CLOUDFLARE_ACCOUNT_ID`**, and variable **`CLOUDFLARE_PROJECT_NAME`** (Worker name).
 
-Fork contributors need the **build** workflow to run on their pull requests. Under **Settings → Actions → General**, find **Fork pull request workflows** and allow workflows from contributors so fork PRs can execute **Build Site** without placing Cloudflare credentials in the fork.
+Under **Settings → Actions → General**, allow **Fork pull request workflows** from contributors so fork PRs can run **Build Site** without Cloudflare credentials in the fork.
 
-The **Deploy Site** workflow runs in the base repository context with your secrets; fork logs should not contain those values.
+**Deploy Site** runs in the base repository with secrets; fork workflow logs should not show those values.
 
 ## GitHub upstream phase 2
 
-For the canonical upstream repository, configure the same secrets and variables at **organization or repository** scope according to your governance model.
+Configure the same secrets/variables at org or repo scope. Confirm **`pull-requests: write`** on the deploy workflow matches org policy for fork PR comments.
 
-The deploy workflow already declares `pull-requests: write` so the default `GITHUB_TOKEN` can comment on fork PRs when the deploy job runs on the base repo. Confirm this matches your org policy before enabling wide fork contributions.
+Disable **GitHub Pages** under **Settings → Pages** if it was only used for this site.
 
-After cutover, if GitHub Pages was only used for this documentation site, disable it under **Settings → Pages** to avoid duplicate or confusing hosting.
+## Local preview (optional)
 
-Production and deployment metadata may show `*.pages.dev` URLs until a custom domain (for example **`konflux.sh`** or a subdomain) is attached in Cloudflare. Once Wrangler reports the alias or primary URL you care about, GitHub Deployments’ `environment_url` will follow; if the alias remains `*.pages.dev` until DNS is primary, note that in release communications.
+From the repository root:
+
+```bash
+mkdir -p site/public && cp docs/mindmap.html site/public/index.html
+cd site && npx wrangler@4 dev
+```
+
+Requires a Cloudflare login or API token in the environment per [Wrangler docs](https://developers.cloudflare.com/workers/wrangler/).
 
 ## Troubleshooting
 
-**Deploy job skipped.** The `workflow_run` trigger requires the completed workflow’s display name to match **Build Site** exactly. The job also requires `github.event.workflow_run.repository.full_name` to equal the current repository. If either condition fails, the deploy job is intentionally skipped.
+**Deploy job skipped.** The triggering workflow display name must be **Build Site** exactly, and `workflow_run.repository` must match the current repo.
 
-**`Missing deployment URL` in the GitHub Script step.** The script reads Wrangler outputs `deployment-alias-url` or `deployment-url`. Pin or upgrade `cloudflare/wrangler-action` as needed, and keep the deploy step `id: cf` so expressions still resolve.
+**`Could not determine Workers deployment URL`.** The workflow reads `deployment-url` from `cloudflare/wrangler-action`, then falls back to parsing Wrangler stdout/stderr for a `workers.dev` URL. Upgrade **`wranglerVersion`** in the workflow if Wrangler output format changed.
 
-**Artifact download fails (for example 404).** The deploy job needs `actions: read` (already set) and a valid `run-id` from the triggering workflow run (already wired). The **Build Site** workflow must have uploaded an artifact named **`site`**.
+**Preview upload fails (PR builds).** Requires Wrangler **≥ 4.21.0** for `--preview-alias`. The workflow pins **4.30.0**.
 
-**No PR comment after a preview deploy.** GitHub sometimes omits `workflow_run.pull_requests`. The script then lists open PRs with `head=owner:branch` and expects exactly one match. Draft PRs, multiple open PRs for the same head, or unusual branch naming can cause the script to skip commenting; adjust the PR state or resolve ambiguity and re-run the build.
+**Artifact download 404.** **Build Site** must upload artifact **`site`**; **Deploy Site** needs `actions: read`.
+
+**No PR comment.** Same as before: ambiguous `head` when resolving the PR number; see the design spec.

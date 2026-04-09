@@ -1,12 +1,12 @@
-# Documentation site → Cloudflare Pages (fork-safe CI) Implementation Plan
+# Documentation site → Cloudflare Workers (fork-safe CI) Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Replace GitHub Pages site deploy with Cloudflare Pages (production + per-PR previews), using a secretless build workflow plus a `workflow_run` deploy workflow that holds Cloudflare and GitHub Deployment credentials, including `site-preview` / `site-production` environments and an upserted PR comment. Naming uses **site** throughout (workflows, artifact); the mindmap is the current `index.html` source only.
+**Goal:** Replace GitHub Pages with **Cloudflare Workers static assets** (production + per-PR previews), using a secretless **Build Site** workflow plus a **`workflow_run` Deploy Site** workflow with Cloudflare + GitHub Deployment credentials, **`site-preview` / `site-production`**, and an upserted PR comment. Naming uses **site** throughout (workflows, artifact); the mindmap is the current `index.html` source only.
 
-**Architecture:** **`Build Site`** runs on `pull_request` and `push` to `main` (path-filtered), checks out the PR head SHA on PRs, produces `_site/` (today: copy `docs/mindmap.html` → `index.html`), uploads artifact **`site`**. **`Deploy Site`** runs on successful completion of that workflow, downloads the artifact by run id, runs `wrangler pages deploy` via `cloudflare/wrangler-action@v3.14.1`, then uses `actions/github-script` to create a GitHub Deployment + success status (`environment_url` from Wrangler outputs) and upsert a preview PR comment when the triggering event was `pull_request`.
+**Architecture:** **`Build Site`** runs on `pull_request` and `push` to `main`, checks out the PR head on PRs, produces `_site/`, uploads artifact **`site`**. **`Deploy Site`** checks out the repo (for `site/wrangler.toml`), downloads the artifact into **`site/public/`**, runs **`wrangler deploy`** on **`push`** and **`wrangler versions upload --preview-alias pr-<run-id>`** on **`pull_request`** (Wrangler **4.30.0** via `cloudflare/wrangler-action@v3.14.1` + `wranglerVersion`), resolves a **`workers.dev`** URL for GitHub, then `actions/github-script` records Deployments and comments.
 
-**Tech Stack:** GitHub Actions, Cloudflare Pages (direct upload), Wrangler (`cloudflare/wrangler-action@v3.14.1`), `actions/github-script@v8`, REST Deployments API.
+**Tech Stack:** GitHub Actions, Cloudflare **Workers** (static assets), Wrangler **4.x**, `cloudflare/wrangler-action@v3.14.1`, `actions/github-script@v8`, REST Deployments API.
 
 **Spec:** [2026-04-09-site-cloudflare-pages-design.md](../specs/2026-04-09-site-cloudflare-pages-design.md)
 
@@ -17,9 +17,11 @@
 | File | Role |
 |------|------|
 | `.github/workflows/site-build.yml` | Secretless build + artifact `site` |
-| `.github/workflows/site-deploy.yml` | Artifact download, Wrangler deploy, GitHub Deployment + PR comment |
+| `.github/workflows/site-deploy.yml` | Checkout + artifact → `site/public/`, `wrangler deploy` / `versions upload`, GitHub Deployment + PR comment |
+| `site/wrangler.toml` | Worker name placeholder, `assets.directory = public`, SPA `not_found_handling`, `preview_urls` |
+| `site/public/.gitkeep` | Keeps `public/` in git; CI overwrites with artifact contents |
 | `.github/workflows/site-github-pages.yml` | **Removed** (replaced by `site-build.yml` / `site-deploy.yml`) |
-| `docs/site-deployment.md` | Operator runbook: Cloudflare project, token scopes, GitHub secrets/variables, fork policy, troubleshooting, phase 2 / `konflux.sh` follow-up |
+| `docs/site-deployment.md` | Operator runbook: Worker, token scopes (Workers Edit), secrets/variables, fork policy, troubleshooting |
 
 ---
 
@@ -38,12 +40,8 @@ name: Build Site
 
 on:
   pull_request:
-    paths:
-      - 'docs/mindmap.html'
   push:
     branches: [main]
-    paths:
-      - 'docs/mindmap.html'
 
 permissions:
   contents: read
@@ -85,162 +83,30 @@ git commit -m "ci: add site build workflow for Cloudflare handoff"
 
 **Files:**
 
-- Create: `.github/workflows/site-deploy.yml`
+- Create or update: `.github/workflows/site-deploy.yml`
 
-- [ ] **Step 1: Create the workflow file**
+- [ ] **Step 1: Implement Deploy Site (canonical copy in repo)**
 
-The job must only run for successful runs of **this repository’s** build workflow, and only for `pull_request` or `push` events.
+The job must only run for successful runs of **this repository’s** **Build Site** workflow, and only for `pull_request` or `push` events.
 
-Use this exact content:
+**Behavior (Workers, not Pages):**
 
-```yaml
-name: Deploy Site
+1. `actions/checkout` (so `site/wrangler.toml` exists).
+2. Download artifact **`site`** into **`site/public/`**.
+3. **`push`:** `cloudflare/wrangler-action` with `wranglerVersion: "4.30.0"`, `workingDirectory: site`, `command: deploy --name=<CLOUDFLARE_PROJECT_NAME>`.
+4. **`pull_request`:** same action with `command: versions upload --name=<CLOUDFLARE_PROJECT_NAME> --assets public --preview-alias pr-<workflow_run.id>`.
+5. **Resolve URL:** `deployment-url` output, else parse stdout/stderr for `workers.dev`.
+6. **`actions/github-script`:** GitHub Deployments + PR comment; `description: Cloudflare Workers (static assets)`.
 
-on:
-  workflow_run:
-    workflows: [Build Site]
-    types: [completed]
+Copy the full YAML from the repository file [`.github/workflows/site-deploy.yml`](../../../.github/workflows/site-deploy.yml) when implementing in another clone.
 
-permissions:
-  contents: read
-  actions: read
-  deployments: write
-  pull-requests: write
-
-concurrency:
-  group: site-deploy-${{ github.event.workflow_run.event }}-${{ github.event.workflow_run.head_repository.owner.login }}-${{ github.event.workflow_run.head_branch }}
-  cancel-in-progress: true
-
-jobs:
-  deploy:
-    runs-on: ubuntu-latest
-    if: >-
-      github.event.workflow_run.conclusion == 'success' &&
-      github.event.workflow_run.repository.full_name == github.repository &&
-      contains(fromJSON('["pull_request","push"]'), github.event.workflow_run.event)
-    env:
-      HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
-      HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
-    steps:
-      - name: Download build artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: site
-          path: _site
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          run-id: ${{ github.event.workflow_run.id }}
-
-      - name: Deploy to Cloudflare Pages
-        id: cf
-        uses: cloudflare/wrangler-action@v3.14.1
-        with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: pages deploy _site --project-name="${{ vars.CLOUDFLARE_PROJECT_NAME }}" --branch="${{ env.HEAD_BRANCH }}"
-
-      - name: GitHub Deployment + preview comment
-        uses: actions/github-script@v8
-        env:
-          DEPLOYMENT_URL: ${{ steps.cf.outputs.deployment-alias-url || steps.cf.outputs.deployment-url }}
-        with:
-          script: |
-            const run = context.payload.workflow_run;
-            const owner = context.repo.owner;
-            const repo = context.repo.repo;
-            const sha = run.head_sha;
-            const isPR = run.event === 'pull_request';
-            const environment = isPR ? 'site-preview' : 'site-production';
-            const url = process.env.DEPLOYMENT_URL;
-            if (!url) {
-              core.setFailed('Missing deployment URL from Wrangler outputs (deployment-alias-url / deployment-url)');
-              return;
-            }
-
-            const deployment = await github.rest.repos.createDeployment({
-              owner,
-              repo,
-              ref: sha,
-              environment,
-              auto_merge: false,
-              required_contexts: [],
-              transient_environment: isPR,
-              production_environment: !isPR,
-            });
-            const deploymentId = deployment.data.id;
-
-            await github.rest.repos.createDeploymentStatus({
-              owner,
-              repo,
-              deployment_id: deploymentId,
-              state: 'success',
-              environment_url: url,
-              description: 'Cloudflare Pages',
-              auto_inactive: isPR,
-            });
-
-            if (!isPR) return;
-
-            const marker = '<!-- site-preview -->';
-            let prNumber = run.pull_requests?.[0]?.number;
-            if (!prNumber) {
-              const head = `${run.head_repository.owner.login}:${run.head_branch}`;
-              const { data: prs } = await github.rest.pulls.list({
-                owner,
-                repo,
-                state: 'open',
-                head,
-                per_page: 100,
-              });
-              if (prs.length !== 1) {
-                core.info(`Skipping PR comment: expected 1 open PR for head=${head}, found ${prs.length}`);
-                return;
-              }
-              prNumber = prs[0].number;
-            }
-
-            const body = [
-              marker,
-              '### Site preview',
-              '',
-              `**Preview:** ${url}`,
-              '',
-              `Commit: \`${sha}\``,
-            ].join('\n');
-
-            const { data: comments } = await github.rest.issues.listComments({
-              owner,
-              repo,
-              issue_number: prNumber,
-              per_page: 100,
-            });
-            const existing = comments.find((c) => c.body?.includes(marker));
-            if (existing) {
-              await github.rest.issues.updateComment({
-                owner,
-                repo,
-                comment_id: existing.id,
-                body,
-              });
-            } else {
-              await github.rest.issues.createComment({
-                owner,
-                repo,
-                issue_number: prNumber,
-                body,
-              });
-            }
-```
-
-Notes baked into this YAML:
-
-- **`vars.CLOUDFLARE_PROJECT_NAME`:** configure as a **repository variable** (not secret). If you prefer a secret name instead, replace that single expression with `${{ secrets.CLOUDFLARE_PROJECT_NAME }}` and document it in the runbook.
-- **`--branch`:** matches `workflow_run.head_branch` so Cloudflare associates the upload with the correct preview or production branch (production when the branch is `main` per Pages project settings).
+- **`vars.CLOUDFLARE_PROJECT_NAME`:** Worker name (same variable name as before).
 
 - [ ] **Step 2: Commit**
 
 ```bash
-git add .github/workflows/site-deploy.yml
-git commit -m "ci: add site deploy to Cloudflare with GitHub Deployments"
+git add .github/workflows/site-deploy.yml site/wrangler.toml site/public/.gitkeep
+git commit -m "ci: deploy site with Workers static assets"
 ```
 
 ---
@@ -274,15 +140,13 @@ git commit -m "ci: drop GitHub Pages workflow for documentation site"
 
 Create `docs/site-deployment.md` with the following sections (adjust org/repo names when copying for upstream):
 
-1. **Overview** — Link to the design spec `docs/superpowers/specs/2026-04-09-site-cloudflare-pages-design.md` and summarize **`Build Site`** / **`Deploy Site`**.
+1. **Overview** — Link to the design spec `docs/superpowers/specs/2026-04-09-site-cloudflare-pages-design.md` and summarize **`Build Site`** / **`Deploy Site`** (Workers + static assets).
 2. **Cloudflare setup**
-   - Create a **Pages** project for **Direct Upload** (not Git-connected CI as the source of truth; GitHub Actions uploads builds).
-   - In project settings, set **production branch** to `main`.
-   - Ensure **preview deployments** are enabled for non-production branches.
-   - Create an **API Token** with at least **Account → Cloudflare Pages → Edit** (and **Account → Account Settings → Read** if required by your account for Wrangler). Store as `CLOUDFLARE_API_TOKEN`.
-   - Copy **Account ID** from the Cloudflare dashboard → `CLOUDFLARE_ACCOUNT_ID`.
-   - Add **`CLOUDFLARE_PROJECT_NAME`** as a GitHub **Actions variable** (same string as the Pages project name).
-   - Optional **custom domain** (fork demos or later `konflux.sh`): Pages → Custom domains → add hostname; complete DNS instructions Cloudflare shows.
+   - Create a **Worker** (or let first `wrangler deploy` create it); enable **preview URLs**; optional **workers.dev** subdomain.
+   - Create an **API Token** with **Cloudflare Workers → Edit** (and **Account Settings → Read** if needed). Pages-only tokens are **not** sufficient. Store as `CLOUDFLARE_API_TOKEN`.
+   - Copy **Account ID** → `CLOUDFLARE_ACCOUNT_ID`.
+   - Add **`CLOUDFLARE_PROJECT_NAME`** as a GitHub **Actions variable** = **Worker name**.
+   - Optional **custom domain** (fork demos or later `konflux.sh`): attach routes on the **Worker**, not a Pages project.
 3. **GitHub setup (fork — phase 1)**
    - Repository → **Settings → Secrets and variables → Actions**:
      - Secrets: `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`
@@ -292,10 +156,10 @@ Create `docs/site-deployment.md` with the following sections (adjust org/repo na
    - Same secrets/variables at **org or repo** level as your governance prefers.
    - Confirm the deploy workflow’s `GITHUB_TOKEN` can comment on fork PRs (`pull-requests: write` is already declared in the workflow).
    - After cutover, **disable GitHub Pages** for this repo if it was only used for this site (**Settings → Pages**).
-   - **Later:** attach **`konflux.sh`** (or a subdomain) in Cloudflare; production URLs in Deployments and docs will then use that hostname once Wrangler reports it (or add a note if the alias URL remains `*.pages.dev` until custom domain is primary).
+   - **Later:** attach **`konflux.sh`** (or a subdomain) to the Worker; production URLs in Deployments follow Wrangler output (often `*.workers.dev` until custom domain is primary).
 5. **Troubleshooting**
    - **Deploy job skipped:** wrong triggering workflow name (must match **`Build Site`** exactly), or `workflow_run.repository` not equal to current repo.
-   - **`Missing deployment URL`:** upgrade Wrangler via wrangler-action or inspect action outputs; ensure deploy step id remains `cf`.
+   - **`Could not determine Workers deployment URL`:** check `wrangler-action` outputs and Wrangler **4.x** stdout/stderr; workflow pins **4.30.0**.
    - **Artifact download 404:** deploy job needs `actions: read` and correct `run-id` (already set); build must have uploaded artifact **`site`**.
    - **No PR comment:** `workflow_run.pull_requests` empty and `pulls.list` with `head=owner:branch` did not return exactly one open PR (document for draft PRs or unusual head branches).
 
@@ -316,11 +180,11 @@ git commit -m "docs: add documentation site Cloudflare operator runbook"
 
 - [ ] **Step 2: Push a commit on `main` that touches `docs/mindmap.html`**
 
-Expected: **`Build Site`** succeeds; **`Deploy Site`** runs; Cloudflare production updates; GitHub shows a **Deployment** for environment **`site-production`** with `environment_url` matching the Pages URL.
+Expected: **`Build Site`** succeeds; **`Deploy Site`** runs; Cloudflare **production Worker** updates; GitHub shows **`site-production`** with `environment_url` on **`workers.dev`** (or your custom host).
 
-- [ ] **Step 3: Open a PR (same repo) that changes `docs/mindmap.html`**
+- [ ] **Step 3: Open a PR (same repo)** (any change that triggers **Build Site**)
 
-Expected: preview deployment; **`site-preview`** deployment; one PR comment updated on reruns.
+Expected: **`wrangler versions upload`** preview; **`site-preview`** deployment; one PR comment updated on reruns.
 
 - [ ] **Step 4: Open a PR from a second GitHub user / fork** (or your own fork of your fork) changing `docs/mindmap.html`**
 
@@ -346,19 +210,19 @@ Expected: build succeeds on the base repo without Cloudflare secrets in fork log
 
 | Spec requirement | Task |
 |------------------|------|
-| Cloudflare instead of GitHub Pages | Tasks 2–3 |
+| Cloudflare Workers instead of GitHub Pages | Tasks 2–3 |
 | Two-phase build + `workflow_run` deploy | Tasks 1–2 |
 | `site-preview` / `site-production` | Task 2 (`createDeployment`) |
 | PR comment upsert + PR resolution fallback | Task 2 (github-script) |
-| Path filter / PR head checkout | Task 1 |
+| PR head checkout | Task 1 |
 | Fork-safe (no secrets on build) | Tasks 1 vs 2 permissions |
 | Operator docs + phases | Tasks 4–6 |
 | Concurrency | Both workflows |
-| `*.pages.dev` then `konflux.sh` | Task 4 runbook |
+| `*.workers.dev` then `konflux.sh` on Worker | Task 4 runbook |
 
 **2. Placeholder scan**
 
-No TBD/TODO left in workflow YAML or task text; Wrangler action version pinned to `v3.14.1`, github-script to `v8`.
+No TBD/TODO left in workflow YAML or task text; `cloudflare/wrangler-action@v3.14.1` with **`wranglerVersion: "4.30.0"`**, github-script `v8`.
 
 **3. Type / naming consistency**
 
