@@ -1,0 +1,134 @@
+# Design: Document mindmap on Cloudflare Pages (PR previews, fork-safe CI)
+
+Date: 2026-04-09  
+Status: Draft (brainstorm consolidated)
+
+## Context
+
+The repository ships an interactive document graph as a single static page (`docs/mindmap.html`). Today, [`.github/workflows/mindmap.yml`](../../../.github/workflows/mindmap.yml) deploys it to **GitHub Pages** on push to `main` when the mindmap file changes: it copies the file to `_site/index.html`, uploads the Pages artifact, and runs `actions/deploy-pages@v4`.
+
+GitHub Pages does not provide **per-pull-request preview URLs** in the same way Cloudflare Pages does. The team wants **preview deployments for PRs**, including PRs **from forks**, without exposing deployment credentials to untrusted workflows.
+
+## Goals
+
+- Deploy the mindmap static site to **Cloudflare Pages** instead of GitHub Pages.
+- **Per-PR previews** on Cloudflare, including **fork PRs**, using a **two-workflow** pattern: unprivileged build + artifact, privileged deploy.
+- Integrate with **GitHub Deployments** using environment names **`site-preview`** and **`site-production`** (preview vs production), with correct `deployment_status` and `environment_url` pointing at the Cloudflare URL.
+- Surface preview links via **GitHub Deployments** and a **single upserted PR comment** (no comment spam on reruns).
+- Roll out in **two phases**: validate on a **personal fork** and Cloudflare account first; then land **upstream** and document org setup. Upstream may start on **`*.pages.dev`** and move to **`konflux.sh`** when DNS is ready.
+
+## Non-goals
+
+- Changing the mindmap application itself (content, bundler, or graph logic) beyond what CI packaging requires.
+- Non-GitHub CI (e.g. only Cloudflare Git integration) as the source of truth—**GitHub Actions** remains the deploy driver.
+- OIDC to Cloudflare in the initial design (optional hardening later); **API token** in GitHub **secrets** is sufficient for phase 1 and 2.
+
+## Approach comparison (condensed)
+
+| Approach | Idea | Verdict |
+|----------|------|--------|
+| **A — `workflow_run` + artifact** | Secretless workflow builds and uploads artifact; second workflow on `workflow_run` downloads artifact and deploys. | **Chosen.** Aligns with GitHub’s model for fork PRs. |
+| **B — `pull_request_target`** | Run deploy with base-repo secrets on PR events. | **Rejected.** High risk if build steps ever execute untrusted code; unnecessary here. |
+| **C — External bot** | Webhook or service triggers deploy. | **Rejected.** Extra operational burden for a static site. |
+
+**Deploy tooling:** Use a **maintained Cloudflare path** (e.g. **Wrangler**-based `pages deploy` via `cloudflare/wrangler-action`, or Cloudflare’s **Pages deploy action**) with a **scoped API token**. The implementation plan will pick one concrete action and pin versions.
+
+## Architecture
+
+### Workflow split
+
+1. **Build workflow** (no secrets required beyond default `GITHUB_TOKEN` for checkout/upload):
+   - **Triggers:** `pull_request` and `push` to `main`, with the same **`paths`** filter as today (`docs/mindmap.html`).
+   - **Checkout:** For `pull_request`, use the **PR head** ref / SHA so fork PRs build the contributor’s tree. For `push` to `main`, use the push ref.
+   - **Build step:** Same as today: create `_site` and copy `docs/mindmap.html` → `_site/index.html`.
+   - **Artifact:** `actions/upload-artifact` with a **fixed, well-known name** (e.g. `mindmap-site`) and **short retention** (enough for the deploy workflow to run; typical 1–5 days).
+   - **Permissions:** `contents: read` (and whatever the upload action minimally needs). **No** Cloudflare or `pages: write`.
+
+2. **Deploy workflow** (secrets and GitHub Deployment API):
+   - **Trigger:** `workflow_run` with `types: [completed]`, **`if`** the conclusion is **`success`**, the **`name`** matches the build workflow, and the triggering event is **`pull_request`** or **`push`** (avoid accidental coupling to other workflows).
+   - **Artifact:** `actions/download-artifact` (or equivalent) using **`github.event.workflow_run.id`** and repository **`github.event.workflow_run.repository.full_name`** (normally the same repo).
+   - **Permissions (minimum conceptual set):** `actions: read`, `contents: read`, **`deployments: write`**, **`pull-requests: write`** (for PR comments on fork PRs). Do **not** grant `pages: write` unless something else needs it—GitHub Pages is being replaced for this site.
+   - **Steps:** Deploy directory to Cloudflare Pages (production vs preview per branch/event); create **GitHub Deployment** on the **head SHA**; set **`deployment_status`** to success with **`environment_url`**; upsert PR comment for previews.
+
+### GitHub environment names (Deployments API)
+
+Use exactly these **GitHub deployment environment** names:
+
+- **`site-preview`** — every **PR** build (including forks) that produces a preview URL on Cloudflare.
+- **`site-production`** — **`push` to `main`** that updates the production Pages deployment.
+
+**Semantics:**
+
+- For **`site-preview`:** `transient_environment: true`, `production_environment: false`. Each deployment targets the PR head commit; Cloudflare preview URL becomes **`environment_url`** (and PR comment body).
+- For **`site-production`:** `production_environment: true`, `transient_environment: false`. Deployment ref is the **`main`** commit SHA after merge/push.
+
+Naming in the GitHub UI will follow these environment names; optional **GitHub Environments** (protection rules) can be added later for `site-production` without changing the names.
+
+### PR comment (preview only)
+
+- After a successful preview deploy, **create or update** one comment on the PR (hidden **HTML comment marker** in the body to find previous comment, e.g. `<!-- mindmap-preview -->`).
+- **PR number resolution:** Prefer `github.event.workflow_run.pull_requests[0].number` when present; otherwise **query the API** for an open PR whose **head SHA** matches `github.event.workflow_run.head_sha` (GitHub does not always populate `pull_requests` on `workflow_run`).
+- **Idempotency:** Updating the same comment keeps noise low across force-pushes and reruns.
+
+### Cloudflare Pages
+
+- **Single project** dedicated to the mindmap (name configurable via secret or variable, e.g. `CLOUDFLARE_PROJECT_NAME`).
+- **Production branch:** `main` (Cloudflare “production” deployment for pushes to `main`).
+- **Previews:** Enabled for non-production branches / PRs so each PR gets a distinct preview URL.
+- **Secrets (repository or environment):** e.g. `CLOUDFLARE_API_TOKEN` (scoped: Account **Cloudflare Pages — Edit** or equivalent minimal set), `CLOUDFLARE_ACCOUNT_ID`. Project name can be secret or variable.
+
+### Domains
+
+- **Fork / phase 1:** Operator may attach a **personal domain or subdomain** to the Pages project for demos; document optional **Custom domains** steps in Cloudflare.
+- **Upstream / phase 2:** Start with the default **`*.pages.dev`** production hostname so merging is not blocked on **`konflux.sh`** DNS. Document a **follow-up**: add **`konflux.sh`** (or subdomain) in Cloudflare and GitHub deployment URLs once org DNS is available.
+
+### Security (fork PRs)
+
+- The **build** workflow must stay **minimal and auditable**: today it only copies a static file. If the pipeline later adds **install/build** steps, they must not run arbitrary code from the PR without review (e.g. avoid `npm install` executing postinstall from untrusted `package.json` until trusted lockfiles and policies exist).
+- The **deploy** workflow trusts **artifacts** produced by the **known** build workflow run, not arbitrary user uploads. Document optional **extra checks** (e.g. verifying `head_repository` or workflow path) if the org wants defense-in-depth; for static HTML preview only, the main risk is **replacing preview content** on Cloudflare, not repository takeover.
+
+### Concurrency
+
+- Preserve intent of the current **`concurrency`** block: avoid overlapping deploys fighting each other. Use a **`group`** keyed by workflow purpose and **branch or PR identifier**, with **`cancel-in-progress: true`** where appropriate for PR previews.
+
+### Removal of GitHub Pages for this site
+
+- Remove or replace **`mindmap.yml`** so the mindmap is **no longer** deployed via `actions/deploy-pages` / `upload-pages-artifact`.
+- **Repository settings:** After cutover, GitHub Pages for this use case can be **disabled** upstream when maintainers agree (document in phase 2 checklist).
+
+## Rollout phases
+
+### Phase 1 — Fork + personal Cloudflare
+
+- Add the two workflows on the **fork** default branch.
+- Create Cloudflare **Pages project** and **API token**; add **GitHub Actions secrets** on the fork.
+- Optionally attach a **demo domain** to the project.
+- Validate: **`main`** → `site-production` + production URL; **PR** (including from a test fork) → `site-preview` + preview URL + **PR comment**.
+
+### Phase 2 — Upstream
+
+- Open a **PR** with the same workflow changes and **in-repo setup documentation** (this spec or a linked doc in `docs/` if the team prefers a non–superpowers path—implementation plan decides file placement for the operator runbook).
+- Upstream maintainers: create **org/repo secrets** (and Cloudflare project for **konflux-ci** or the chosen org account); start on **`*.pages.dev`**; schedule **`konflux.sh`** when DNS owners are ready.
+
+## Operator documentation (must ship with implementation)
+
+Include a runbook section covering:
+
+- **Cloudflare:** Create Pages project, enable previews, token scopes, optional custom domain, where to read **preview vs production** URLs after deploy.
+- **GitHub (fork):** Required **secrets**, **`workflow_run`** and **`pull_request`** permissions (forks must be allowed to run workflows from collaborators / standard fork policy).
+- **GitHub (upstream):** Same secrets at org or repo level; note **`pull-requests: write`** for comment upsert on fork PRs.
+- **Troubleshooting:** Missing PR number on `workflow_run`, failed artifact download (`actions: read`), wrong workflow filter.
+
+## Testing and acceptance
+
+- Path filter: changing unrelated files does **not** trigger mindmap workflows.
+- **`main`** push with mindmap change: Cloudflare **production** updates; GitHub **Deployment** for **`site-production`** is **success** with correct **`environment_url`**.
+- **Same-repo PR:** Preview URL, **`site-preview`** deployment, PR comment updated on rerun.
+- **Fork PR:** Preview deploy and comment succeed; **fork workflow** logs show **no** Cloudflare secrets.
+
+## Spec self-review (2026-04-09)
+
+- **Placeholders:** Deploy action choice left to implementation plan (Wrangler vs Pages action)—intentional.
+- **Consistency:** Environment names fixed to **`site-preview`** / **`site-production`** throughout.
+- **Scope:** Mindmap static deploy and CI only; no SPA/OAuth overlap.
+- **Ambiguity:** “GitHub deployment environment names” are the **environment** field on the Deployments API, matching GitHub Environments if those are created with the same names.
