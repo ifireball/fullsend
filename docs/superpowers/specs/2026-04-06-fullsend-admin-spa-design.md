@@ -166,6 +166,6 @@ The table itself lives in this document once the first row exists; until then, t
 
 ## Open items
 
-- Confirm **GitHub App** user token **web** flow for **static SPA** (secret-less or accepted deviation).
-- Finalize **Svelte** vs alternative frontend after team input.
+- Confirm **GitHub App** user token **web** flow for **static SPA** (secret-less or accepted deviation)—see experiment protocol in [`docs/superpowers/plans/2026-04-12-fullsend-admin-spa.md`](../plans/2026-04-12-fullsend-admin-spa.md) (Task 1); official docs currently list `client_secret` as **required** for `POST https://github.com/login/oauth/access_token` in the web application flow.
+- **Frontend stack (decided 2026-04-12):** **Svelte 5** + **TypeScript** + **Vite** for the admin SPA (see implementation plan).
 - Expand **Appendix A** from code during first implementation PRs.
