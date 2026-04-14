@@ -2,6 +2,8 @@
 
 OAuth **Part A** (authorize) and **Part B** (same-origin `POST` to this helper, which exchanges the `code` **server-side** with GitHub) against a real **`http://localhost:<PORT>`** origin, matching the GitHub App callback URL.
 
+The in-repo **admin** SPA under `admin/` uses a **different** callback: register `http://localhost:<PORT>/admin/` (see `admin/sample.env.local`), not this folder’s `/oauth/callback.html` path.
+
 Dynamic pages are served by **`serve.py`**, which reads your GitHub App’s public **OAuth client id** from the environment (`CLIENT_ID`). Optionally it reads **`CLIENT_SECRET`** for a **full** server-side token exchange (same shape as a production Worker/BFF). The secret is **never** read from the browser or from JSON bodies—only from your shell environment on the machine running `serve.py`. **Never commit** secrets; this folder’s `.gitignore` ignores `.env*`.
 
 ## 1. Register the callback on your test GitHub App

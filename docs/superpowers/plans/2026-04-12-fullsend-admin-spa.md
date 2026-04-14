@@ -413,7 +413,7 @@ git commit -m "feat(admin): scaffold Vite+Svelte SPA under /admin/"
 
 - [ ] **Step 4: `sample.env.local`** — full GitHub App + env walkthrough; example keys only (no real secrets).
 
-- [ ] **Step 5: Manual smoke** — local GitHub App callback pointing at Vite dev (or static `public/oauth/callback.html` once added in Task 7); end-to-end: authorize → callback → SPA finish calls proxied Worker → `ghu_` token JSON visible only in controlled UI (not console-logged).
+- [ ] **Step 5: Manual smoke** — local GitHub App callback `http://localhost:5173/admin/` (or `127.0.0.1`); end-to-end: authorize → brief `/admin/?code=…` → same load replaces to `/admin/#/` → proxied Worker exchange → `ghu_` token only in controlled UI (not console-logged).
 
 - [ ] **Step 6: Commit**
 
@@ -867,83 +867,31 @@ git commit -m "feat(admin): Octokit factory with 401 event"
 
 ---
 
-### Task 7: Production sign-in (authorize URL + callback route component)
+### Task 7: Production sign-in (authorize URL + SPA document callback)
 
 **Files:**
 
-- Create: `admin/src/lib/auth/oauth.ts` (PKCE-aware; builds on `pkce.ts` from **Task 2b**)
-- Create: `admin/src/routes/OAuthCallback.svelte`
-- Modify: `admin/src/App.svelte` (router map)
+- Create / maintain: `admin/src/lib/auth/oauth.ts` (PKCE-aware; builds on `pkce.ts` from **Task 2b**)
+- Modify: `admin/src/App.svelte` (`onMount`: document `?code=&state=` handoff, `history.replaceState` to `#/`, token exchange)
 - Modify: `docs/superpowers/specs/2026-04-06-fullsend-admin-spa-design.md` (Appendix A: REST rows for `/user` and Worker proxy path for exchange)
 
 **Prerequisite:** **Task 2b** (OAuth Worker + Vite proxy + PKCE) must exist so token exchange is **same-origin** to the admin origin in dev; production deploy of that Worker is tracked in **Task 2b** follow-up / **Task 4** extension.
 
-- [ ] **Step 1: Write `admin/src/lib/auth/oauth.ts`**
+- [ ] **Step 1: `admin/src/lib/auth/oauth.ts`** — PKCE authorize (`startGithubSignIn`), `getOAuthRedirectUri()` from `new URL(import.meta.env.BASE, window.location.origin).href`, document handoff (`consumeOAuthParamsFromDocumentUrl`, one-shot `sessionStorage`), `completeGithubOAuthFromHandoff` (`POST /api/oauth/token`, `saveToken`, `refreshSession`).
 
-```typescript
-export function buildAuthorizeURL(params: {
-  clientId: string;
-  redirectUri: string;
-  state: string;
-  codeChallenge: string;
-}): string {
-  const u = new URL("https://github.com/login/oauth/authorize");
-  u.searchParams.set("client_id", params.clientId);
-  u.searchParams.set("redirect_uri", params.redirectUri);
-  u.searchParams.set("state", params.state);
-  u.searchParams.set("code_challenge", params.codeChallenge);
-  u.searchParams.set("code_challenge_method", "S256");
-  return u.toString();
-}
+- [ ] **Step 2: SPA document callback (no static `callback.html`, no `#/oauth/finish`)**
 
-export function parseOAuthCallback(search: string): { code: string; state: string } | null {
-  const q = new URLSearchParams(search.startsWith("?") ? search : `?${search}`);
-  const code = q.get("code");
-  const state = q.get("state");
-  if (!code || !state) return null;
-  return { code, state };
-}
-```
+Register the GitHub App callback as the **SPA entry** matching Vite `base: '/admin/'`, e.g. `http://localhost:5173/admin/` (trailing slash should match `redirect_uri` in code). **`redirect_uri`** in authorize + token exchange is `new URL(import.meta.env.BASE, window.location.origin).href`.
 
-- [ ] **Step 2: Write `admin/src/routes/OAuthCallback.svelte`** (minimal: parse query, show code presence; defer exchange to next step file)
+On load, if `URLSearchParams(location.search).has("code")`, stash `{ code, state }` in `sessionStorage` for one-shot use, then **`history.replaceState`** to the same origin with **no** document query and hash **`#/`** so the authorization `code` never lingers in the address bar. Still in `App.svelte` `onMount`, consume the stash, verify `state` against the value stored at authorize time, read PKCE **`code_verifier`**, **`POST /api/oauth/token`** (Task 2b Worker via Vite proxy in dev), **`saveToken`**, clear OAuth session keys, **`refreshSession`**. Surface errors inline (banner / short message). **Never** send `client_secret` from the SPA.
 
-Use a small script block that `onMount` reads `window.location.search`, calls `parseOAuthCallback`, sets local state; template shows success/failure.
+The dev Worker allowlists loopback **`redirect_uri`** pathnames **`/admin/`**, **`/admin`**, and legacy **`/admin/oauth/callback.html`** for migrations.
 
-- [ ] **Step 3: Register route in `App.svelte`**
-
-Add hash route `"/oauth/callback": OAuthCallback` **only if** using hash router for callback is acceptable; **GitHub redirects to fixed path on origin**, so callback is **not** under hash—use **separate** static page for callback at `_site/oauth/callback.html` in a **later** sub-task, or handle **full page** at `/admin/oauth/callback` with **history**—for **hash MVP**, add **`admin/oauth-callback.html`** second Vite input, or simplest: **document** that production GitHub App callback URL is `https://<origin>/admin/index.html` with **query** params (GitHub preserves query on static file). GitHub typically redirects to `redirect_uri` with `?code=&state=`—ensure `redirect_uri` is exactly `https://production.example/admin/index.html` or dedicated `callback.html` copied to `_site/`.
-
-**Concrete MVP:** add `admin/public/oauth/callback.html` as a second built page:
-
-Create `admin/public/oauth/callback.html`:
-
-```html
-<!doctype html>
-<html><head><meta charset="UTF-8"><title>Signing in…</title></head>
-<body>
-<script type="module">
-  const p = new URLSearchParams(location.search);
-  const code = p.get("code");
-  const state = p.get("state");
-  if (!code || !state) {
-    document.body.textContent = "Missing OAuth parameters";
-  } else {
-    sessionStorage.setItem("fullsend_oauth_pending", JSON.stringify({ code, state }));
-    location.replace("/admin/#/oauth/finish");
-  }
-</script>
-</body></html>
-```
-
-Copy `admin/public` tree into Vite build via `publicDir: 'public'` (Vite default).
-
-- [ ] **Step 4: Add finish route `admin/src/routes/OAuthFinish.svelte`** that reads `sessionStorage` (`code`, `state`, **PKCE `code_verifier`**), calls **same-origin** `POST /api/oauth/...` (Task 2b Worker via Vite proxy in dev), receives token JSON, calls `saveToken`, clears session storage, redirects `#/`. **Never** send `client_secret` from the SPA.
-
-- [ ] **Step 5: Commit**
+- [ ] **Step 3: Commit**
 
 ```bash
 git add admin
-git commit -m "feat(admin): production OAuth callback pages and helpers"
+git commit -m "feat(admin): OAuth callback via SPA entry /admin/"
 ```
 
 ---

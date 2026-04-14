@@ -1,0 +1,9 @@
+# Local OAuth BFF: exchanges GitHub OAuth `code` for a user token (never expose `client_secret` to the browser).
+# Run via `npm run dev` (Wrangler + Vite) or: `npx wrangler dev --port 8787`
+name = "fullsend-admin-oauth"
+main = "worker/src/index.ts"
+compatibility_date = "2024-12-01"
+
+# Non-secret defaults; override in `.dev.vars` for local (see `sample.env.local`).
+[vars]
+GITHUB_APP_CLIENT_ID = ""
