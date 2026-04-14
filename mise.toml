@@ -1,0 +1,11 @@
+# Pin Node for the admin SPA and any future JS tooling.
+# Activate: https://mise.jdx.dev/getting-started.html#activate-mise
+# First time in a clone/worktree: `mise trust` (see https://mise.jdx.dev/cli/trust.html).
+# Then `cd` into this repo; `node` / `npm` come from mise.
+[tools]
+node = "22"
+
+# Same file Vite loads when cwd is admin/ (VITE_* and other local vars).
+# Keeps `mise exec` / activated shells aligned with `npm run dev` in admin/.
+[env]
+_.file = "admin/.env.local"
