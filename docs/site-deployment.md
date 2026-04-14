@@ -9,7 +9,7 @@ Two GitHub Actions workflows:
 - **Build Site** — on `pull_request` and `push` to `main`, checks out the PR head when relevant, builds `_site/`, uploads artifact **`site`**.
 - **Deploy Site** — on successful **Build Site** via `workflow_run`, checks out the repo (for [`site/wrangler.toml`](../site/wrangler.toml)), downloads the artifact into `site/public/`, then:
   - **push to `main`:** `wrangler deploy` → production Worker traffic.
-  - **pull_request:** `wrangler versions upload --preview-alias pr-<run-id>` → preview URL on `*.workers.dev` without changing production.
+  - **pull_request:** `wrangler versions upload --preview-alias pr-<pr-number>` → preview URL on `*.workers.dev` without changing production (alias falls back to `pr-<workflow_run.id>` only when the same fork branch matches more than one open PR).
 
 GitHub **Deployments** use environments **`site-preview`** and **`site-production`**; PRs also get a single upserted comment with the preview link.
 

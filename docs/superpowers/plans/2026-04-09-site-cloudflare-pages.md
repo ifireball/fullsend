@@ -4,7 +4,7 @@
 
 **Goal:** Replace GitHub Pages with **Cloudflare Workers static assets** (production + per-PR previews), using a secretless **Build Site** workflow plus a **`workflow_run` Deploy Site** workflow with Cloudflare + GitHub Deployment credentials, **`site-preview` / `site-production`**, and an upserted PR comment. Naming uses **site** throughout (workflows, artifact); the mindmap is the current `index.html` source only.
 
-**Architecture:** **`Build Site`** runs on `pull_request` and `push` to `main`, checks out the PR head on PRs, produces `_site/`, uploads artifact **`site`**. **`Deploy Site`** checks out the repo (for `site/wrangler.toml`), downloads the artifact into **`site/public/`**, runs **`wrangler deploy`** on **`push`** and **`wrangler versions upload --preview-alias pr-<run-id>`** on **`pull_request`** (Wrangler **4.30.0** via `cloudflare/wrangler-action@v3.14.1` + `wranglerVersion`), resolves a **`workers.dev`** URL for GitHub, then `actions/github-script` records Deployments and comments.
+**Architecture:** **`Build Site`** runs on `pull_request` and `push` to `main`, checks out the PR head on PRs, produces `_site/`, uploads artifact **`site`**. **`Deploy Site`** checks out the repo (for `site/wrangler.toml`), downloads the artifact into **`site/public/`**, runs **`wrangler deploy`** on **`push`** and **`wrangler versions upload --preview-alias pr-<pr-number>`** (falls back to `workflow_run.id` only when multiple open PRs share the same head) on **`pull_request`** (Wrangler **4.30.0** via `cloudflare/wrangler-action@v3.14.1` + `wranglerVersion`), resolves a **`workers.dev`** URL for GitHub, then `actions/github-script` records Deployments and comments.
 
 **Tech Stack:** GitHub Actions, Cloudflare **Workers** (static assets), Wrangler **4.x**, `cloudflare/wrangler-action@v3.14.1`, `actions/github-script@v8`, REST Deployments API.
 
@@ -20,7 +20,7 @@
 | `.github/workflows/site-deploy.yml` | Checkout + artifact → `site/public/`, `wrangler deploy` / `versions upload`, GitHub Deployment + PR comment |
 | `site/wrangler.toml` | Worker name placeholder, `assets.directory = public`, SPA `not_found_handling`, `preview_urls` |
 | `site/public/.gitkeep` | Keeps `public/` in git; CI overwrites with artifact contents |
-| `.github/workflows/site-github-pages.yml` | **Removed** (replaced by `site-build.yml` / `site-deploy.yml`) |
+| `.github/workflows/mindmap.yml` | **Removed** (replaced by `site-build.yml` / `site-deploy.yml`) |
 | `docs/site-deployment.md` | Operator runbook: Worker, token scopes (Workers Edit), secrets/variables, fork policy, troubleshooting |
 
 ---
@@ -94,7 +94,7 @@ The job must only run for successful runs of **this repository’s** **Build Sit
 1. `actions/checkout` (so `site/wrangler.toml` exists).
 2. Download artifact **`site`** into **`site/public/`**.
 3. **`push`:** `cloudflare/wrangler-action` with `wranglerVersion: "4.30.0"`, `workingDirectory: site`, `command: deploy --name=<CLOUDFLARE_PROJECT_NAME>`.
-4. **`pull_request`:** same action with `command: versions upload --name=<CLOUDFLARE_PROJECT_NAME> --assets public --preview-alias pr-<workflow_run.id>`.
+4. **`pull_request`:** same action with `command: versions upload --name=<CLOUDFLARE_PROJECT_NAME> --preview-alias pr-<pr-number>` (asset config from `site/wrangler.toml` only; alias falls back to `pr-<workflow_run.id>` if the head matches multiple open PRs).
 5. **Resolve URL:** `deployment-url` output, else parse stdout/stderr for `workers.dev`.
 6. **`actions/github-script`:** GitHub Deployments + PR comment; `description: Cloudflare Workers (static assets)`.
 
@@ -115,16 +115,16 @@ git commit -m "ci: deploy site with Workers static assets"
 
 **Files:**
 
-- Delete: `.github/workflows/site-github-pages.yml`
+- Delete: `.github/workflows/mindmap.yml` (the prior GitHub Pages / mindmap deploy workflow)
 
 - [ ] **Step 1: Delete the file**
 
-Remove `.github/workflows/site-github-pages.yml` entirely so the site is no longer deployed via `actions/deploy-pages`.
+Remove `.github/workflows/mindmap.yml` entirely so the site is no longer deployed via `actions/deploy-pages`.
 
 - [ ] **Step 2: Commit**
 
 ```bash
-git rm .github/workflows/site-github-pages.yml
+git rm .github/workflows/mindmap.yml
 git commit -m "ci: drop GitHub Pages workflow for documentation site"
 ```
 
@@ -161,7 +161,7 @@ Create `docs/site-deployment.md` with the following sections (adjust org/repo na
    - **Deploy job skipped:** wrong triggering workflow name (must match **`Build Site`** exactly), or `workflow_run.repository` not equal to current repo.
    - **`Could not determine Workers deployment URL`:** check `wrangler-action` outputs and Wrangler **4.x** stdout/stderr; workflow pins **4.30.0**.
    - **Artifact download 404:** deploy job needs `actions: read` and correct `run-id` (already set); build must have uploaded artifact **`site`**.
-   - **No PR comment:** `workflow_run.pull_requests` empty and `pulls.list` with `head=owner:branch` did not return exactly one open PR (document for draft PRs or unusual head branches).
+   - **No PR comment:** `workflow_run.pull_requests` empty and `pulls.list` with `head=owner:branch` did not return exactly one open PR, or multiple open PRs share the same head (the workflow logs a warning and still deploys a preview; comment upsert is skipped until the head is unique).
 
 - [ ] **Step 2: Commit**
 

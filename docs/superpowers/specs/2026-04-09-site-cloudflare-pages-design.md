@@ -45,7 +45,7 @@ The repository publishes a **static documentation site**. Today the primary surf
 1. **Build (`site-build.yml`):** `pull_request` + `push` to `main` (no `paths` filter in current fork—runs on every PR/push; may be narrowed later). Produces **`site`** artifact (`_site/`).
 2. **Deploy (`site-deploy.yml`):** On successful **Build Site**, checkout (for `site/wrangler.toml`), download artifact into **`site/public/`**, then:
    - **`push`:** `wrangler deploy --name=<var>` → production.
-   - **`pull_request`:** `wrangler versions upload --assets public --preview-alias pr-<workflow_run.id>` → preview only.
+   - **`pull_request`:** `wrangler versions upload` (asset config from `wrangler.toml` only) with `--preview-alias pr-<pr-number>` (falls back to `workflow_run.id` only when multiple open PRs share the same head) → preview only.
 
 **Permissions:** Build: `contents: read` only. Deploy: `actions: read`, `deployments: write`, `pull-requests: write`. No `pages: write` for this site.
 

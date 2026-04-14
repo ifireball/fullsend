@@ -36,6 +36,50 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           run-id: ${{ github.event.workflow_run.id }}
 
+      - name: Resolve preview context (PR number + preview alias)
+        id: preview-context
+        if: success()
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const run = context.payload.workflow_run;
+            if (run.event !== 'pull_request') {
+              core.setOutput('preview_alias', '');
+              core.setOutput('pr_number', '');
+              return;
+            }
+
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            let prNumber = run.pull_requests?.[0]?.number;
+
+            if (!prNumber) {
+              const head = `${run.head_repository.owner.login}:${run.head_branch}`;
+              const { data: prs } = await github.rest.pulls.list({
+                owner,
+                repo,
+                state: 'open',
+                head,
+                per_page: 100,
+              });
+              if (prs.length === 1) {
+                prNumber = prs[0].number;
+              } else if (prs.length === 0) {
+                core.setFailed(`Cannot resolve PR for preview: no open PR for head=${head}`);
+                return;
+              } else {
+                core.warning(
+                  `Multiple open PRs (${prs.length}) for head=${head}; preview alias falls back to workflow_run.id; PR comment upsert skipped until head is unique`,
+                );
+                prNumber = null;
+              }
+            }
+
+            const workflowRunId = run.id;
+            const previewAlias = prNumber != null ? `pr-${prNumber}` : `pr-${workflowRunId}`;
+            core.setOutput('preview_alias', previewAlias);
+            core.setOutput('pr_number', prNumber != null ? String(prNumber) : '');
+
       - name: Deploy to production (Workers + static assets)
         id: cf-prod
         if: github.event.workflow_run.event == 'push'
@@ -59,8 +103,7 @@ jobs:
           command: >-
             versions upload
             --name="${{ vars.CLOUDFLARE_PROJECT_NAME }}"
-            --assets public
-            --preview-alias pr-${{ github.event.workflow_run.id }}
+            --preview-alias ${{ steps.preview-context.outputs.preview_alias }}
 
       - name: Resolve deployment URL
         id: meta
@@ -81,7 +124,7 @@ jobs:
           fi
           if [ -z "$url" ]; then
             comb="${OUT_PROD:-}${ERR_PROD:-}${OUT_PR:-}${ERR_PR:-}"
-            url=$(printf '%s' "$comb" | grep -oE 'https://[a-zA-Z0-9._/?#&=%_-]+' | grep 'workers.dev' | head -1 || true)
+            url=$(printf '%s' "$comb" | grep -oE 'https://[a-zA-Z0-9._/?#&=%_-]+' | grep -E '\.workers\.dev(/|$)' | head -1 || true)
           fi
           if [ -z "$url" ]; then
             echo "::error::Could not determine Workers deployment URL from Wrangler output"
@@ -89,10 +132,29 @@ jobs:
           fi
           echo "deployment_url=$url" >> "$GITHUB_OUTPUT"
 
+      - name: Validate preview deployment URL (alias vs versioned URL)
+        if: >-
+          github.event.workflow_run.event == 'pull_request' &&
+          steps.cf-preview.outcome == 'success' &&
+          steps.meta.outcome == 'success'
+        env:
+          URL: ${{ steps.meta.outputs.deployment_url }}
+          ALIAS_TOKEN: ${{ steps.preview-context.outputs.preview_alias }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${ALIAS_TOKEN:-}" ]]; then
+            exit 0
+          fi
+          if [[ "$URL" != *"$ALIAS_TOKEN"* ]]; then
+            echo "::warning::Preview deployment URL does not include alias token '${ALIAS_TOKEN}' (got: ${URL}). wrangler-action may be returning a versioned URL instead of the preview-alias hostname; confirm in Cloudflare or Wrangler structured output."
+          fi
+
       - name: GitHub Deployment + preview comment
+        if: steps.meta.outcome == 'success'
         uses: actions/github-script@v8
         env:
           DEPLOYMENT_URL: ${{ steps.meta.outputs.deployment_url }}
+          PREVIEW_PR_NUMBER: ${{ steps.preview-context.outputs.pr_number }}
         with:
           script: |
             const run = context.payload.workflow_run;
@@ -131,24 +193,16 @@ jobs:
 
             if (!isPR) return;
 
-            const marker = '<!-- site-preview -->';
-            let prNumber = run.pull_requests?.[0]?.number;
-            if (!prNumber) {
-              const head = `${run.head_repository.owner.login}:${run.head_branch}`;
-              const { data: prs } = await github.rest.pulls.list({
-                owner,
-                repo,
-                state: 'open',
-                head,
-                per_page: 100,
-              });
-              if (prs.length !== 1) {
-                core.info(`Skipping PR comment: expected 1 open PR for head=${head}, found ${prs.length}`);
-                return;
-              }
-              prNumber = prs[0].number;
+            const raw = process.env.PREVIEW_PR_NUMBER || '';
+            const prNumber = raw ? Number.parseInt(raw, 10) : NaN;
+            if (!Number.isFinite(prNumber)) {
+              core.warning(
+                'Skipping PR preview comment upsert: no unique PR number (preview deployment and GitHub Deployment still recorded)',
+              );
+              return;
             }
 
+            const marker = '<!-- site-preview -->';
             const body = [
               marker,
               '### Site preview',
@@ -158,13 +212,18 @@ jobs:
               `Commit: \`${sha}\``,
             ].join('\n');
 
-            const { data: comments } = await github.rest.issues.listComments({
-              owner,
-              repo,
-              issue_number: prNumber,
-              per_page: 100,
-            });
-            const existing = comments.find((c) => c.body?.includes(marker));
+            let existing = null;
+            for (let page = 1; page <= 20; page++) {
+              const { data: comments } = await github.rest.issues.listComments({
+                owner,
+                repo,
+                issue_number: prNumber,
+                per_page: 100,
+                page,
+              });
+              existing = comments.find((c) => c.body?.includes(marker));
+              if (existing || comments.length < 100) break;
+            }
             if (existing) {
               await github.rest.issues.updateComment({
                 owner,
