@@ -2,6 +2,8 @@
 
 This directory holds the **admin installation UI**: a **Svelte 5 + Vite** single-page app served under the `/admin/` base path. Local **GitHub OAuth** token exchange runs in the repository’s **Cloudflare Worker** under [`../../cloudflare_site/worker/`](../../cloudflare_site/worker/); the browser never sends `client_secret` to GitHub directly. **Vite** is configured at the repository root (`vite.config.ts`). Local **`GITHUB_APP_*` values must be present in the environment** of the processes that run Vite and Wrangler (see **Environment** below).
 
+**Hardening (CORS + config model):** for review and security context, see [`docs/admin-oauth-worker.md`](../../docs/admin-oauth-worker.md) — **`GET /api/github/user`** when `Origin` is missing (Sec-Fetch-Site + Referer, path-limited), and **why there is no `ADMIN_OAUTH_ENABLED` flag** (Turnstile + 503 `missing_turnstile_keys`, etc.).
+
 Production packaging of this app for the public site is tracked in the repo-wide implementation plan (`docs/superpowers/plans/2026-04-12-fullsend-admin-spa.md`). Layout follows [ADR 0019](../../ADRs/0019-web-source-and-cloudflare-site-layout.md) (`web/` + root `package.json` + `cloudflare_site/`).
 
 ## Tooling with mise
@@ -35,7 +37,7 @@ Create a **GitHub App** used for **user** sign-in to the admin UI (not the same 
 
 The SPA **does not** embed the GitHub App OAuth **client id** at build time. Sign-in navigates to **`GET /api/oauth/authorize`** on the site Worker, which **redirects** to `https://github.com/login/oauth/authorize` with `client_id` from Worker configuration (local env / Wrangler deploy only).
 
-**Origin (not `Referer`):** the Worker uses the **`Origin` header only** when deciding CORS and when binding `POST /api/oauth/token` to the `redirect_uri` origin (same-origin `fetch` sends `Origin`). Full-page navigations to **`GET /api/oauth/authorize`** often omit `Origin`; in that case the Worker allows the request when `redirect_uri` is on the same public origin as the Worker, or when both the Worker URL and `redirect_uri` are **loopback HTTP** (typical Vite + Wrangler dev with different ports).
+**Origin (primary; `Referer` is not identity):** the Worker uses the **`Origin` header** for CORS on most `/api/*` routes and **requires** `Origin` for **`POST /api/oauth/token`** tab-binding to the `redirect_uri` origin. Full-page navigations to **`GET /api/oauth/authorize`** often omit `Origin`; in that case the Worker allows the request when `redirect_uri` is on the same public origin as the Worker, or when both the Worker URL and `redirect_uri` are **loopback HTTP** (typical Vite + Wrangler dev with different ports). The **narrow exception** for missing `Origin` — **`Sec-Fetch-Site` + `Referer` only for `GET`/`OPTIONS` `/api/github/user`** — is documented in [`docs/admin-oauth-worker.md`](../../docs/admin-oauth-worker.md); it does **not** apply to token exchange or authorize binding.
 
 **Turnstile (required):** the Worker always folds the site key into GitHub’s `state` at authorize time; the SPA decodes it after redirect and runs an invisible Turnstile challenge before **`POST /api/oauth/token`**. Do **not** put Turnstile keys in the Vite build (`define` / `VITE_*`).
 
