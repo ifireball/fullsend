@@ -2,7 +2,12 @@
   import { onMount } from "svelte";
   import Router from "svelte-spa-router";
   import Home from "./routes/Home.svelte";
-  import { githubLogin, refreshSession, signOut } from "./lib/auth/session";
+  import {
+    authBootPending,
+    githubLogin,
+    refreshSession,
+    signOut,
+  } from "./lib/auth/session";
   import {
     completeGithubOAuthFromHandoff,
     consumeOAuthParamsFromDocumentUrl,
@@ -14,24 +19,25 @@
   };
 
   let oauthErr = $state<string | null>(null);
-  let oauthStatus = $state<string | null>(null);
 
   onMount(() => {
     const onGithub401 = () => signOut();
     window.addEventListener("fullsend:github-unauthorized", onGithub401);
 
     void (async () => {
-      const hadOAuthReturn = consumeOAuthParamsFromDocumentUrl();
-      if (hadOAuthReturn) {
-        oauthStatus = "Completing sign-in…";
-        const result = await completeGithubOAuthFromHandoff();
-        oauthStatus = null;
-        if (!result.ok) {
-          oauthErr = result.error;
+      try {
+        const hadOAuthReturn = consumeOAuthParamsFromDocumentUrl();
+        if (hadOAuthReturn) {
+          const result = await completeGithubOAuthFromHandoff();
+          if (!result.ok) {
+            oauthErr = result.error;
+          }
+          return;
         }
-        return;
+        await refreshSession();
+      } finally {
+        authBootPending.set(false);
       }
-      await refreshSession();
     })();
 
     return () =>
@@ -39,11 +45,16 @@
   });
 </script>
 
-<header class="bar">
+<header class="bar" aria-busy={$authBootPending}>
   <strong>Fullsend Admin</strong>
   <span class="tag">{import.meta.env.DEV ? "local dev" : "production"}</span>
   <span class="spacer"></span>
-  {#if $githubLogin}
+  {#if $authBootPending}
+    <span class="auth-wait" role="status">
+      <span class="spinner" aria-hidden="true"></span>
+      <span class="auth-wait-label">Loading session…</span>
+    </span>
+  {:else if $githubLogin}
     <span class="user">{$githubLogin}</span>
     <button type="button" class="btn" onclick={() => signOut()}>Sign out</button>
   {:else}
@@ -62,9 +73,6 @@
       }}>Sign in with GitHub</button>
   {/if}
 </header>
-{#if oauthStatus}
-  <p class="oauth-banner">{oauthStatus}</p>
-{/if}
 {#if oauthErr}
   <p class="oauth-err">{oauthErr}</p>
   <p class="oauth-err-actions">
@@ -73,7 +81,7 @@
     </button>
   </p>
 {/if}
-<main class="main">
+<main class="main" class:main--pending={$authBootPending}>
   <Router {routes} />
 </main>
 
@@ -97,6 +105,30 @@
   .user {
     font-size: 0.9rem;
   }
+  .auth-wait {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.9rem;
+    color: #444;
+  }
+  .auth-wait-label {
+    white-space: nowrap;
+  }
+  @keyframes spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+  .spinner {
+    display: inline-block;
+    width: 1.1rem;
+    height: 1.1rem;
+    border: 2px solid #ccc;
+    border-top-color: #24292f;
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+  }
   .btn {
     cursor: pointer;
     padding: 0.35rem 0.75rem;
@@ -109,13 +141,6 @@
     background: #24292f;
     color: #fff;
     border-color: #24292f;
-  }
-  .oauth-banner {
-    margin: 0;
-    padding: 0.5rem 1rem;
-    border-bottom: 1px solid #ddd;
-    background: #f9f9f9;
-    font-size: 0.9rem;
   }
   .oauth-err {
     margin: 0;
@@ -140,5 +165,9 @@
   }
   .main {
     padding: 1rem;
+  }
+  .main.main--pending {
+    opacity: 0.55;
+    pointer-events: none;
   }
 </style>
