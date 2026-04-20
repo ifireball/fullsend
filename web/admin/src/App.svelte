@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import Router from "svelte-spa-router";
   import Home from "./routes/Home.svelte";
+  import OrgList from "./routes/OrgList.svelte";
   import {
     authBootPending,
     githubLogin,
@@ -16,6 +17,7 @@
 
   const routes = {
     "/": Home,
+    "/orgs": OrgList,
   };
 
   let oauthErr = $state<string | null>(null);

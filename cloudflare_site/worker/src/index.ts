@@ -10,7 +10,7 @@ import {
 } from "./oauthCors";
 
 /**
- * Site Worker: static assets via `[assets]` plus OAuth BFF + `/user` proxy for the admin SPA.
+ * Site Worker: static assets via `[assets]` plus OAuth BFF + GitHub REST proxies for the admin SPA.
  * `GET /api/oauth/authorize` adds `client_id` and redirects to GitHub (SPA has no build-time client id).
  */
 export interface Env {
@@ -33,6 +33,7 @@ export interface Env {
 const TOKEN_URL = "https://github.com/login/oauth/access_token";
 const GITHUB_AUTHORIZE_URL = "https://github.com/login/oauth/authorize";
 const GITHUB_USER_URL = "https://api.github.com/user";
+const GITHUB_ORG_MEMBERSHIPS_PATH = "/user/memberships/orgs";
 const TURNSTILE_SITEVERIFY_URL =
   "https://challenges.cloudflare.com/turnstile/v0/siteverify";
 
@@ -46,7 +47,8 @@ function isAdminApiPath(pathname: string): boolean {
   return (
     pathname === "/api/oauth/authorize" ||
     pathname === "/api/oauth/token" ||
-    pathname === "/api/github/user"
+    pathname === "/api/github/user" ||
+    pathname === "/api/github/user/memberships/orgs"
   );
 }
 
@@ -422,6 +424,127 @@ async function handleGithubUser(
   });
 }
 
+type OrgMembershipRow = {
+  organization?: { login?: string };
+  state?: string;
+};
+
+/**
+ * Lists org memberships for the user token, paginating on the Worker so the browser never calls
+ * `api.github.com` (no CORS). Response is a compact JSON array for the SPA.
+ */
+async function handleGithubOrgMemberships(
+  request: Request,
+  env: Env,
+  url: URL,
+  corsOrigin: string,
+): Promise<Response> {
+  const cors = corsHeaders(corsOrigin);
+
+  const limited = await consumeRateLimitOr429(
+    env.GITHUB_USER_RATE_LIMITER,
+    url.pathname,
+    request,
+    cors,
+  );
+  if (limited) return limited;
+
+  if (request.method !== "GET") {
+    return new Response(JSON.stringify({ error: "method_not_allowed" }), {
+      status: 405,
+      headers: { "content-type": "application/json", ...cors },
+    });
+  }
+
+  const auth = request.headers.get("Authorization") ?? "";
+  if (!auth.startsWith("Bearer ") || auth.length < 10) {
+    return new Response(JSON.stringify({ error: "missing_bearer_token" }), {
+      status: 401,
+      headers: { "content-type": "application/json", ...cors },
+    });
+  }
+
+  const accept =
+    request.headers.get("Accept") ?? "application/vnd.github+json";
+  const apiVersion =
+    request.headers.get("X-GitHub-Api-Version") ?? "2022-11-28";
+
+  const headers: Record<string, string> = {
+    Accept: accept,
+    Authorization: auth,
+    "X-GitHub-Api-Version": apiVersion,
+    "User-Agent": "fullsend-admin-oauth-worker",
+  };
+
+  const rows: OrgMembershipRow[] = [];
+  const maxPages = 50;
+  for (let page = 1; page <= maxPages; page++) {
+    const ghUrl = new URL(`https://api.github.com${GITHUB_ORG_MEMBERSHIPS_PATH}`);
+    ghUrl.searchParams.set("per_page", "100");
+    ghUrl.searchParams.set("page", String(page));
+
+    const ghRes = await fetch(ghUrl.toString(), { headers });
+    const text = await ghRes.text();
+
+    if (!ghRes.ok) {
+      return new Response(text, {
+        status: ghRes.status,
+        headers: {
+          "content-type": ghRes.headers.get("content-type") ?? "application/json",
+          ...cors,
+        },
+      });
+    }
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(text) as unknown;
+    } catch {
+      return new Response(JSON.stringify({ error: "invalid_github_json" }), {
+        status: 502,
+        headers: { "content-type": "application/json", ...cors },
+      });
+    }
+
+    if (!Array.isArray(parsed)) {
+      return new Response(JSON.stringify({ error: "unexpected_github_shape" }), {
+        status: 502,
+        headers: { "content-type": "application/json", ...cors },
+      });
+    }
+
+    if (parsed.length === 0) break;
+
+    for (const item of parsed) {
+      if (item && typeof item === "object") {
+        rows.push(item as OrgMembershipRow);
+      }
+    }
+
+    if (parsed.length < 100) break;
+  }
+
+  const logins = new Map<string, string>();
+  for (const m of rows) {
+    const login =
+      m.organization &&
+      typeof m.organization.login === "string" &&
+      m.organization.login.trim() !== ""
+        ? m.organization.login
+        : null;
+    if (login != null) logins.set(login.toLowerCase(), login);
+  }
+
+  const organizations = [...logins.values()].sort((a, b) =>
+    a.localeCompare(b),
+  );
+
+  return new Response(JSON.stringify({ organizations: organizations.map((login) => ({ login })) }), {
+    status: 200,
+    headers: { "content-type": "application/json; charset=utf-8", ...cors },
+  });
+}
+
 async function handleAdminApi(
   request: Request,
   env: Env,
@@ -484,9 +607,16 @@ async function handleAdminApi(
     return handleGithubUser(request, env, url, corsOrigin);
   }
 
+  if (url.pathname === "/api/github/user/memberships/orgs") {
+    return handleGithubOrgMemberships(request, env, url, corsOrigin);
+  }
+
   return new Response(JSON.stringify({ error: "not_found" }), {
     status: 404,
-    headers: { "content-type": "application/json", ...cors },
+    headers: {
+      "content-type": "application/json",
+      ...corsHeaders(corsOrigin),
+    },
   });
 }
 

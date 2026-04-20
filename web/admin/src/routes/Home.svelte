@@ -7,6 +7,7 @@
 
 <p>Admin shell is up.</p>
 <p>Current hash: <code>{hash}</code></p>
+<p><a href="#/orgs">Organizations</a></p>
 
 <section
   class="proof"

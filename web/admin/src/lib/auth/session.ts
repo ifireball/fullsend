@@ -1,4 +1,5 @@
 import { derived, writable } from "svelte/store";
+import { clearOrgListMemoryCache } from "../orgs/fetchOrgs";
 import { clearSession, loadToken } from "./tokenStore";
 import {
   fetchGitHubUser,
@@ -35,5 +36,6 @@ export async function refreshSession(): Promise<void> {
 
 export function signOut(): void {
   clearSession();
+  clearOrgListMemoryCache();
   githubUser.set(null);
 }
