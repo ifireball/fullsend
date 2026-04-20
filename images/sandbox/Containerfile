@@ -28,19 +28,6 @@ FROM ghcr.io/nvidia/openshell-community/sandboxes/base@sha256:f0d1ec92bf219759c1
 USER root
 
 # ---------------------------------------------------------------------------
-# Workaround for NVIDIA/OpenShell#886: the sandbox proxy does TLS
-# termination and re-signs traffic with its own CA at
-# /etc/openshell-tls/ca-bundle.pem, but does not auto-configure
-# git/curl/pip to trust it. Set the env vars at image level so
-# every tool picks up the proxy CA without per-agent env files.
-# Remove after upstream fixes CA propagation.
-ENV GIT_SSL_CAINFO="/etc/openshell-tls/ca-bundle.pem" \
-    SSL_CERT_FILE="/etc/openshell-tls/ca-bundle.pem" \
-    REQUESTS_CA_BUNDLE="/etc/openshell-tls/ca-bundle.pem" \
-    CURL_CA_BUNDLE="/etc/openshell-tls/ca-bundle.pem" \
-    NODE_EXTRA_CA_CERTS="/etc/openshell-tls/ca-bundle.pem"
-
-# ---------------------------------------------------------------------------
 # Install rsync (for safe repo write-back).
 RUN apt-get update \
     && apt-get install -y --no-install-recommends rsync \
@@ -112,6 +99,22 @@ RUN curl -fsSL "https://github.com/sheeki03/tirith/releases/download/v${TIRITH_V
     && tar xzf /tmp/tirith.tar.gz -C /usr/local/bin tirith \
     && chmod +x /usr/local/bin/tirith \
     && rm /tmp/tirith.tar.gz
+
+# ---------------------------------------------------------------------------
+# Workaround for NVIDIA/OpenShell#886: the sandbox proxy does TLS
+# termination and re-signs traffic with its own CA at
+# /etc/openshell-tls/ca-bundle.pem, but does not auto-configure
+# git/curl/pip to trust it. Set the env vars at image level so
+# every tool picks up the proxy CA without per-agent env files.
+# Remove after upstream fixes CA propagation.
+#
+# These must be set AFTER all RUN steps — the CA file only exists at
+# runtime inside the sandbox, not during CI builds.
+ENV GIT_SSL_CAINFO="/etc/openshell-tls/ca-bundle.pem" \
+    SSL_CERT_FILE="/etc/openshell-tls/ca-bundle.pem" \
+    REQUESTS_CA_BUNDLE="/etc/openshell-tls/ca-bundle.pem" \
+    CURL_CA_BUNDLE="/etc/openshell-tls/ca-bundle.pem" \
+    NODE_EXTRA_CA_CERTS="/etc/openshell-tls/ca-bundle.pem"
 
 # Switch back to the sandbox user.
 USER sandbox
