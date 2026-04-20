@@ -6,9 +6,8 @@ import type {
 } from "@octokit/types";
 
 /**
- * GitHub REST client for **user** tokens. Browser calls to `api.github.com` are blocked by
- * CORS for most routes; prefer same-origin [`fetchGitHubUser`](./user.ts) until a Worker
- * proxy exists for each endpoint you need.
+ * GitHub REST client for **user** tokens. Some routes (e.g. org memberships) work from the
+ * browser against `api.github.com`; `/user` still uses the same-origin Worker in [`user.ts`](./user.ts).
  */
 export function createUserOctokit(accessToken: string): Octokit {
   return new Octokit({

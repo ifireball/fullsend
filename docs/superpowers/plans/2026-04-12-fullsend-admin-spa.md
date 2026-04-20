@@ -908,14 +908,13 @@ git commit -m "feat(admin): OAuth callback via SPA entry /admin/"
 
 ### Task 9: Org list (alphabetical, search) + in-memory session cache
 
-**Status (2026-04-20):** **Complete** — filter + Vitest under `web/admin/src/lib/orgs/`; org list UI + `#/orgs` route; org fetch via same-origin **`GET /api/github/user/memberships/orgs`** Worker proxy (browser-safe; Octokit `paginate` would hit CORS). In-memory cache cleared on sign-out.
+**Status (2026-04-20):** **Complete** — filter + Vitest under `web/admin/src/lib/orgs/`; org list UI + `#/orgs` route; org fetch via **Octokit `paginate`** on `GET https://api.github.com/user/memberships/orgs` in the browser. In-memory cache cleared on sign-out.
 
 **Files:**
 
-- Create: `web/admin/src/lib/orgs/fetchOrgs.ts` — `fetch` to Worker (aggregates GitHub `GET /user/memberships/orgs` server-side)
+- Create: `web/admin/src/lib/orgs/fetchOrgs.ts` — Octokit `paginate` `GET /user/memberships/orgs` in-browser
 - Create: `web/admin/src/routes/OrgList.svelte`
 - Modify: `web/admin/src/App.svelte` routes
-- Modify: `cloudflare_site/worker/src/index.ts` — org memberships proxy route
 
 - [x] **Step 1: Write Vitest for pure filter `filterOrgsByPrefix` in `admin/src/lib/orgs/filter.test.ts`**
 

@@ -1,3 +1,4 @@
+import { createUserOctokit } from "../github/client";
 import type { OrgRow } from "./filter";
 
 let memoryCache: { token: string; orgs: OrgRow[] } | null = null;
@@ -17,8 +18,20 @@ export class FetchOrgsError extends Error {
   }
 }
 
+function octokitErrorStatus(e: unknown): number {
+  if (
+    typeof e === "object" &&
+    e !== null &&
+    "status" in e &&
+    typeof (e as { status: unknown }).status === "number"
+  ) {
+    return (e as { status: number }).status;
+  }
+  return 502;
+}
+
 /**
- * Fetches org memberships via same-origin Worker (GitHub REST is not browser-callable).
+ * Lists org memberships from GitHub REST in the browser (`api.github.com` allows CORS for this route).
  * Results are cached in memory for the session until `force` or `clearOrgListMemoryCache`.
  */
 export async function fetchOrgs(
@@ -29,43 +42,32 @@ export async function fetchOrgs(
     return memoryCache.orgs;
   }
 
-  const res = await fetch("/api/github/user/memberships/orgs", {
-    headers: {
-      Accept: "application/vnd.github+json",
-      Authorization: `Bearer ${accessToken}`,
-      "X-GitHub-Api-Version": "2022-11-28",
-    },
-  });
+  const octokit = createUserOctokit(accessToken);
 
-  const text = await res.text();
-  if (!res.ok) {
-    throw new FetchOrgsError(
-      res.status,
-      `GitHub org memberships failed: ${res.status} ${text.slice(0, 200)}`,
-    );
-  }
+  let memberships: {
+    organization?: { login?: string } | null;
+  }[];
 
-  let data: unknown;
   try {
-    data = JSON.parse(text) as unknown;
-  } catch {
-    throw new FetchOrgsError(502, "Invalid JSON from org memberships proxy.");
+    memberships = await octokit.paginate(
+      octokit.rest.orgs.listMembershipsForAuthenticatedUser,
+      { per_page: 100 },
+    );
+  } catch (e) {
+    const status = octokitErrorStatus(e);
+    const msg = e instanceof Error ? e.message : "GitHub org memberships failed.";
+    throw new FetchOrgsError(status, msg);
   }
 
-  const rec = data as Record<string, unknown>;
-  const rawOrgs = rec.organizations;
-  if (!Array.isArray(rawOrgs)) {
-    throw new FetchOrgsError(502, "Unexpected org memberships response shape.");
+  const logins = new Map<string, string>();
+  for (const m of memberships) {
+    const login = m.organization?.login?.trim();
+    if (login) logins.set(login.toLowerCase(), login);
   }
 
-  const orgs: OrgRow[] = [];
-  for (const item of rawOrgs) {
-    if (!item || typeof item !== "object") continue;
-    const login = (item as Record<string, unknown>).login;
-    if (typeof login === "string" && login.trim() !== "") {
-      orgs.push({ login });
-    }
-  }
+  const orgs = [...logins.values()]
+    .sort((a, b) => a.localeCompare(b))
+    .map((login) => ({ login }));
 
   memoryCache = { token: accessToken, orgs };
   return orgs;
