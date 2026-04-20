@@ -1,8 +1,8 @@
 /**
- * Heuristics for `GET /user/orgs` when GitHub returns **no rows**.
+ * Copy when the org picker is empty after deriving orgs from **`GET /user/repos`**.
  *
- * GitHub’s OpenAPI notes fine-grained tokens respond with **200 + empty list** when org data
- * is not accessible (instead of 403). Classic OAuth missing scope tends to yield **403**.
+ * GitHub lists repositories the user may access (owner, collaborator, organization_member);
+ * we surface unique **organization** owners as the next step toward choosing repositories.
  */
 
 export function headersToRecord(headers: unknown): Record<string, string> {
@@ -30,40 +30,38 @@ function parseOAuthScopes(raw: string | undefined): string[] {
     .filter(Boolean);
 }
 
-function canListOrgsWithClassicScopes(scopes: string[]): boolean {
-  return scopes.some(
-    (s) =>
-      s === "read:org" ||
-      s === "user" ||
-      s === "read:user" ||
-      s === "write:org" ||
-      s === "admin:org",
-  );
+function hasClassicRepoScope(scopes: string[]): boolean {
+  return scopes.some((s) => s === "repo" || s === "public_repo");
 }
 
 /**
- * When the org list is empty, returns user-facing copy explaining likely causes from HTTP status
- * and GitHub response headers. Returns `null` when there is nothing specific to add.
+ * Explains an empty org list after scanning repositories from `GET /user/repos`.
  */
-export function buildEmptyOrgListHint(
+export function buildEmptyOrgsFromReposHint(
+  repoTotal: number,
+  distinctOrgOwners: number,
   firstPageStatus: number,
   headers: Record<string, string>,
 ): string | null {
   if (firstPageStatus !== 200) {
-    return `GitHub returned HTTP ${firstPageStatus} with no organizations. Check the token, app installation, and GitHub App permissions.`;
+    return `GitHub returned HTTP ${firstPageStatus} while listing repositories (GET /user/repos). Check the token and GitHub App repository permissions.`;
   }
 
-  const scopes = parseOAuthScopes(headers["x-oauth-scopes"]);
-
-  if (scopes.length > 0 && !canListOrgsWithClassicScopes(scopes)) {
-    return `Your token’s OAuth scopes (${scopes.join(", ")}) do not include user or read:org, which GitHub documents as required to list organizations for classic OAuth tokens. Re-authorize the app with the needed scopes.`;
-  }
-
-  if (scopes.length === 0) {
+  if (repoTotal === 0) {
+    const scopes = parseOAuthScopes(headers["x-oauth-scopes"]);
+    if (scopes.length > 0 && !hasClassicRepoScope(scopes)) {
+      return `Your token’s OAuth scopes (${scopes.join(", ")}) may be insufficient to list private repositories; classic tokens usually need the repo (or public_repo) scope for GET /user/repos. Re-authorize or widen GitHub App repository access.`;
+    }
     return (
-      "GitHub returned an empty list (HTTP 200). For GitHub App user tokens, GET /user/orgs usually reflects organizations this app can already work with—so the list can be empty until the app is installed somewhere, or when GitHub omits OAuth scope headers. " +
-      "That does not mean the product is blocked: many apps pair this with GET /user/installations and an Install / Configure link so an org admin adds the app when they choose an organization. " +
-      "In GitHub App settings, grant the minimum Organization permissions your API calls need (Metadata read-only is a typical baseline); add Members, Administration, Actions, Secrets, and other repository or organization permissions per endpoint—see GitHub’s documentation topic “Permissions required for GitHub Apps.”"
+      "No repositories were returned for this token on GET /user/repos. " +
+      "Grant the GitHub App repository access (for example Contents read) for the repos you care about, or sign in again."
+    );
+  }
+
+  if (distinctOrgOwners === 0) {
+    return (
+      "Repositories are visible under your personal account only—none are owned by a GitHub organization in this result set. " +
+      "This screen lists organizations inferred from org-owned repos as a path toward choosing repositories."
     );
   }
 

@@ -1,32 +1,33 @@
 import { describe, it, expect } from "vitest";
-import { buildEmptyOrgListHint } from "./emptyOrgListHint";
+import { buildEmptyOrgsFromReposHint } from "./emptyOrgListHint";
 
-describe("buildEmptyOrgListHint", () => {
-  it("returns GitHub App / empty-scope guidance when scopes header is absent on 200", () => {
-    const h = buildEmptyOrgListHint(200, {});
-    expect(h).toMatch(/HTTP 200/);
-    expect(h).toMatch(/GET \/user\/installations/);
-    expect(h).toMatch(/Metadata/);
-  });
-
-  it("returns classic OAuth scope guidance when scopes omit user/read:org", () => {
-    const h = buildEmptyOrgListHint(200, { "x-oauth-scopes": "repo" });
-    expect(h).toMatch(/read:org/);
-    expect(h).toMatch(/repo/);
-  });
-
-  it("returns null when read:org is present", () => {
-    expect(
-      buildEmptyOrgListHint(200, { "x-oauth-scopes": "repo, read:org" }),
-    ).toBeNull();
-  });
-
-  it("returns null when user scope is present", () => {
-    expect(buildEmptyOrgListHint(200, { "x-oauth-scopes": "user" })).toBeNull();
-  });
-
-  it("mentions non-200 status", () => {
-    const h = buildEmptyOrgListHint(502, {});
+describe("buildEmptyOrgsFromReposHint", () => {
+  it("explains non-200 from repo listing", () => {
+    const h = buildEmptyOrgsFromReposHint(0, 0, 502, {});
     expect(h).toMatch(/502/);
+    expect(h).toMatch(/user\/repos/);
+  });
+
+  it("hints classic repo scope when repos are empty but scopes omit repo", () => {
+    const h = buildEmptyOrgsFromReposHint(0, 0, 200, {
+      "x-oauth-scopes": "read:org",
+    });
+    expect(h).toMatch(/repo/);
+    expect(h).toMatch(/read:org/);
+  });
+
+  it("returns generic no-repos when scopes absent", () => {
+    const h = buildEmptyOrgsFromReposHint(0, 0, 200, {});
+    expect(h).toMatch(/No repositories/);
+    expect(h).toMatch(/GET \/user\/repos/);
+  });
+
+  it("explains personal-account-only repos", () => {
+    const h = buildEmptyOrgsFromReposHint(3, 0, 200, {});
+    expect(h).toMatch(/personal account/);
+  });
+
+  it("returns null when org owners exist", () => {
+    expect(buildEmptyOrgsFromReposHint(5, 2, 200, {})).toBeNull();
   });
 });

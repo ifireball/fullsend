@@ -57,9 +57,13 @@
 
 <section class="orgs" aria-labelledby="orgs-h">
   <h1 id="orgs-h">Organizations</h1>
+  <p class="lede">
+    Names come from organization-owned repositories you can access (<code>GET /user/repos</code>),
+    as a step toward choosing repositories—not from org membership APIs.
+  </p>
 
   {#if !$githubUser}
-    <p class="muted">Sign in to list organizations you belong to.</p>
+    <p class="muted">Sign in to load this list.</p>
   {:else}
     <div class="toolbar">
       <label class="search-label">
@@ -88,7 +92,7 @@
     {/if}
 
     {#if loading && orgs.length === 0}
-      <p class="muted" role="status">Loading organizations…</p>
+      <p class="muted" role="status">Loading from your repositories…</p>
     {:else if error}
       <p class="err" role="alert">{error}</p>
     {:else if filtered.length === 0}
@@ -121,8 +125,18 @@
     max-width: 36rem;
   }
   .orgs h1 {
-    margin: 0 0 1rem;
+    margin: 0 0 0.35rem;
     font-size: 1.25rem;
+  }
+  .lede {
+    margin: 0 0 1rem;
+    font-size: 0.88rem;
+    line-height: 1.45;
+    color: #444;
+    max-width: 40rem;
+  }
+  .lede code {
+    font-size: 0.85em;
   }
   .toolbar {
     display: flex;
