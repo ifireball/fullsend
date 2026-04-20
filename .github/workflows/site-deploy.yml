@@ -132,8 +132,12 @@ jobs:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           command: deploy --name="${{ vars.CLOUDFLARE_PROJECT_NAME }}"
-          vars: GITHUB_APP_CLIENT_ID TURNSTILE_SITE_KEY
-          secrets: GITHUB_APP_CLIENT_SECRET TURNSTILE_SECRET_KEY
+          vars: |
+            GITHUB_APP_CLIENT_ID
+            TURNSTILE_SITE_KEY
+          secrets: |
+            GITHUB_APP_CLIENT_SECRET
+            TURNSTILE_SECRET_KEY
         env:
           GITHUB_APP_CLIENT_ID: ${{ vars.FULLSEND_GITHUB_APP_CLIENT_ID }}
           GITHUB_APP_CLIENT_SECRET: ${{ secrets.FULLSEND_GITHUB_APP_CLIENT_SECRET }}
@@ -153,8 +157,12 @@ jobs:
             versions upload
             --name="${{ vars.CLOUDFLARE_PROJECT_NAME }}"
             --preview-alias ${{ steps.preview-context.outputs.preview_alias }}
-          vars: GITHUB_APP_CLIENT_ID TURNSTILE_SITE_KEY
-          secrets: GITHUB_APP_CLIENT_SECRET TURNSTILE_SECRET_KEY
+          vars: |
+            GITHUB_APP_CLIENT_ID
+            TURNSTILE_SITE_KEY
+          secrets: |
+            GITHUB_APP_CLIENT_SECRET
+            TURNSTILE_SECRET_KEY
         env:
           GITHUB_APP_CLIENT_ID: ${{ vars.FULLSEND_GITHUB_APP_CLIENT_ID }}
           GITHUB_APP_CLIENT_SECRET: ${{ secrets.FULLSEND_GITHUB_APP_CLIENT_SECRET }}
