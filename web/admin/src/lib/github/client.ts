@@ -2,11 +2,9 @@ import { Octokit } from "@octokit/rest";
 import type { OctokitResponse } from "@octokit/types";
 
 /**
- * GitHub REST client for **user** tokens. Browser calls to `api.github.com` are blocked by
- * CORS for most routes; prefer same-origin [`fetchGitHubUser`](./user.ts) until a Worker
- * proxy exists for each endpoint you need.
+ * GitHub REST client for **user** tokens. Some routes (e.g. org memberships) work from the
+ * browser against `api.github.com`; `/user` still uses the same-origin Worker in [`user.ts`](./user.ts).
  *
- * Used by follow-on admin features (e.g. org listing via `fetchOrgs` on `feat/admin-spa-org-list`).
  * A `request` hook dispatches `fullsend:github-unauthorized` on HTTP **401** so `App.svelte` can sign out.
  *
  * Note: `new Octokit({ request: { hook } })` is ignored — `@octokit/core` replaces `request.hook`
