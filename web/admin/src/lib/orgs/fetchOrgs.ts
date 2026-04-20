@@ -1,12 +1,15 @@
 import { createUserOctokit } from "../github/client";
-import { buildEmptyOrgListHint, headersToRecord } from "./emptyOrgListHint";
+import { buildEmptyOrgsFromReposHint, headersToRecord } from "./emptyOrgListHint";
 import type { OrgRow } from "./filter";
+
+/** Cap pages when paginating GET /user/repos (100 repos per page). */
+const MAX_REPO_LIST_PAGES = 50;
 
 export type FetchOrgsResult = {
   orgs: OrgRow[];
   /**
-   * When `orgs` is empty, explains likely permission or token-class behavior
-   * (GitHub often returns 200 + [] instead of 403 for fine-grained / app tokens).
+   * When `orgs` is empty, explains likely causes from the repository scan
+   * (`GET /user/repos`).
    */
   emptyHint: string | null;
 };
@@ -44,23 +47,30 @@ function octokitErrorStatus(e: unknown): number {
   return 502;
 }
 
-function friendlyOrgListHttpError(status: number, githubMessage: string): string {
+function friendlyReposListHttpError(status: number, githubMessage: string): string {
   if (status === 403) {
-    return "GitHub refused to list organizations (403). Classic OAuth tokens need the user or read:org scope. For a GitHub App, check Organization permissions and that the app is installed on each organization you expect.";
+    return "GitHub refused to list repositories (403). For classic OAuth, you may need the repo scope for private repositories. For a GitHub App, check repository permissions on the installation.";
   }
   if (status === 401) {
-    return "Could not load organizations — sign in again if your token expired.";
+    return "Could not load repositories — sign in again if your token expired.";
   }
   return githubMessage;
 }
 
+function isOrganizationOwner(owner: unknown): owner is { login: string } {
+  if (!owner || typeof owner !== "object") return false;
+  const o = owner as Record<string, unknown>;
+  return (
+    o.type === "Organization" &&
+    typeof o.login === "string" &&
+    o.login.trim() !== ""
+  );
+}
+
 /**
- * Lists organizations the token may access via `GET /user/orgs` in the browser (CORS allows it).
- *
- * We use {@link Octokit.rest.orgs.listForAuthenticatedUser} rather than
- * `listMembershipsForAuthenticatedUser` (`GET /user/memberships/orgs`): GitHub App user access
- * tokens commonly return an **empty** memberships list while `/user/orgs` still reflects orgs
- * the app installation can see (see GitHub REST docs for both endpoints).
+ * Builds the org picker from **`GET /user/repos`**: unique GitHub **Organization** owners among
+ * repositories the user may access (owner, collaborator, organization_member). This matches a
+ * “choose org → choose repo” flow without calling org-membership or org-list endpoints.
  */
 export async function fetchOrgs(
   accessToken: string,
@@ -77,45 +87,61 @@ export async function fetchOrgs(
 
   try {
     const iterator = octokit.paginate.iterator(
-      octokit.rest.orgs.listForAuthenticatedUser,
-      { per_page: 100 },
+      octokit.rest.repos.listForAuthenticatedUser,
+      {
+        per_page: 100,
+        affiliation: "owner,collaborator,organization_member",
+        sort: "full_name",
+      },
     );
 
     let firstStatus = 200;
     let firstHeaders: Record<string, string> = {};
-    const logins = new Map<string, string>();
+    const orgLogins = new Map<string, string>();
+    let repoTotal = 0;
+    let pages = 0;
 
     for await (const page of iterator) {
+      pages += 1;
+      if (pages > MAX_REPO_LIST_PAGES) break;
+
       if (Object.keys(firstHeaders).length === 0) {
         firstStatus = page.status;
         firstHeaders = headersToRecord(page.headers);
       }
+
       const chunk = page.data;
       if (!Array.isArray(chunk)) continue;
-      for (const org of chunk) {
-        const login =
-          typeof org.login === "string" ? org.login.trim() : "";
-        if (login) logins.set(login.toLowerCase(), login);
+
+      for (const repo of chunk) {
+        repoTotal += 1;
+        const owner = (repo as { owner?: unknown }).owner;
+        if (isOrganizationOwner(owner)) {
+          const login = owner.login.trim();
+          orgLogins.set(login.toLowerCase(), login);
+        }
       }
     }
 
-    const orgs = [...logins.values()]
+    const orgs = [...orgLogins.values()]
       .sort((a, b) => a.localeCompare(b))
       .map((login) => ({ login }));
 
     const emptyHint =
       orgs.length === 0
-        ? buildEmptyOrgListHint(firstStatus, firstHeaders)
+        ? buildEmptyOrgsFromReposHint(
+            repoTotal,
+            orgLogins.size,
+            firstStatus,
+            firstHeaders,
+          )
         : null;
 
     memoryCache = { token: accessToken, orgs, emptyHint };
     return { orgs, emptyHint };
   } catch (e) {
     const status = octokitErrorStatus(e);
-    const msg = e instanceof Error ? e.message : "GitHub organizations failed.";
-    throw new FetchOrgsError(
-      status,
-      friendlyOrgListHttpError(status, msg),
-    );
+    const msg = e instanceof Error ? e.message : "GitHub repository listing failed.";
+    throw new FetchOrgsError(status, friendlyReposListHttpError(status, msg));
   }
 }
