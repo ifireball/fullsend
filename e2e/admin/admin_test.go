@@ -653,6 +653,7 @@ Files over 64KB save fine if they contain only ASCII characters.`
 		if logErr != nil {
 			t.Logf("Could not fetch run logs: %v", logErr)
 		} else {
+			t.Logf("Workflow run logs (first 4000 chars):\n%.4000s", logs)
 			t.Logf("Workflow run logs (last 2000 chars):\n%s", truncateEnd(logs, 2000))
 		}
 		t.Fatalf("Triage workflow run %d concluded with %q, expected success", finalRun.ID, finalRun.Conclusion)
