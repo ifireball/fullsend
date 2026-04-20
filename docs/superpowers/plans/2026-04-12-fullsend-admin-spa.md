@@ -908,13 +908,16 @@ git commit -m "feat(admin): OAuth callback via SPA entry /admin/"
 
 ### Task 9: Org list (alphabetical, search) + in-memory session cache
 
+**Status (2026-04-20):** **Complete** — filter + Vitest under `web/admin/src/lib/orgs/`; org list UI + `#/orgs` route; org fetch via same-origin **`GET /api/github/user/memberships/orgs`** Worker proxy (browser-safe; Octokit `paginate` would hit CORS). In-memory cache cleared on sign-out.
+
 **Files:**
 
-- Create: `admin/src/lib/orgs/fetchOrgs.ts` — uses Octokit `paginate` `GET /user/memberships/orgs`
-- Create: `admin/src/routes/OrgList.svelte`
-- Modify: `admin/src/App.svelte` routes
+- Create: `web/admin/src/lib/orgs/fetchOrgs.ts` — `fetch` to Worker (aggregates GitHub `GET /user/memberships/orgs` server-side)
+- Create: `web/admin/src/routes/OrgList.svelte`
+- Modify: `web/admin/src/App.svelte` routes
+- Modify: `cloudflare_site/worker/src/index.ts` — org memberships proxy route
 
-- [ ] **Step 1: Write Vitest for pure filter `filterOrgsByPrefix` in `admin/src/lib/orgs/filter.test.ts`**
+- [x] **Step 1: Write Vitest for pure filter `filterOrgsByPrefix` in `admin/src/lib/orgs/filter.test.ts`**
 
 ```typescript
 import { describe, it, expect } from "vitest";
@@ -932,7 +935,7 @@ describe("filterOrgsByPrefix", () => {
 });
 ```
 
-- [ ] **Step 2: Implement `admin/src/lib/orgs/filter.ts`**
+- [x] **Step 2: Implement `admin/src/lib/orgs/filter.ts`**
 
 ```typescript
 export type OrgRow = { login: string };
@@ -946,7 +949,7 @@ export function filterOrgsByPrefix(orgs: OrgRow[], q: string): OrgRow[] {
 }
 ```
 
-- [ ] **Step 3: Run tests**
+- [x] **Step 3: Run tests**
 
 Run:
 
@@ -956,11 +959,11 @@ cd admin && npm run test -- src/lib/orgs/filter.test.ts
 
 Expected: PASS.
 
-- [ ] **Step 4: Implement `fetchOrgs` and `OrgList.svelte`** (show loading, error, refresh button; wire token from `loadToken()`).
+- [x] **Step 4: Implement `fetchOrgs` and `OrgList.svelte`** (show loading, error, refresh button; wire token from `loadToken()`).
 
-- [ ] **Step 5: Append Appendix A** with the exact REST method `GET /user/memberships/orgs` and required OAuth scopes (derive from `internal/forge/github` preflight if present).
+- [x] **Step 5: Append Appendix A** with the exact REST method `GET /user/memberships/orgs` and required OAuth scopes (derive from `internal/forge/github` preflight if present).
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add admin/src/lib/orgs admin/src/routes/OrgList.svelte admin/src/App.svelte
@@ -1136,7 +1139,7 @@ git commit -m "docs: admin SPA local development checklist"
 
 **2. Placeholder scan**
 
-No TBD/TODO strings. **Complete (2026-04-20 plan refresh):** Tasks **1**, **2**, **2b**, **3**, **4**, **4b** (Step 6 callback URL checklist ongoing), **5**, **6**, **7**. **Open:** **9–14**, **15** (preview OAuth redesign), **16** (local dev doc), **4b** Step 6.
+No TBD/TODO strings. **Complete (2026-04-20 plan refresh):** Tasks **1**, **2**, **2b**, **3**, **4**, **4b** (Step 6 callback URL checklist ongoing), **5**, **6**, **7**. **Open:** **10–14**, **15** (preview OAuth redesign), **16** (local dev doc), **4b** Step 6.
 
 **3. Type consistency**
 
