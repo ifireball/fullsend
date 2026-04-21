@@ -457,11 +457,9 @@ func TestValidate_ModelValid(t *testing.T) {
 	}
 }
 
-func TestValidate_PostScriptRequiresValidationLoop(t *testing.T) {
+func TestValidate_PostScriptWithoutValidationLoop(t *testing.T) {
 	h := &Harness{Agent: "agents/test.md", PostScript: "scripts/post.sh"}
-	err := h.Validate()
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "post_script requires validation_loop")
+	require.NoError(t, h.Validate())
 }
 
 func TestValidate_PostScriptWithValidationLoop(t *testing.T) {

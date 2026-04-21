@@ -238,9 +238,6 @@ func (h *Harness) Validate() error {
 	if h.ValidationLoop != nil && h.ValidationLoop.Script == "" {
 		return fmt.Errorf("validation_loop.script is required when validation_loop is set")
 	}
-	if h.PostScript != "" && h.ValidationLoop == nil {
-		return fmt.Errorf("post_script requires validation_loop (ADR 0022: no unvalidated output may reach mutations)")
-	}
 	if err := h.validateSecurity(); err != nil {
 		return err
 	}

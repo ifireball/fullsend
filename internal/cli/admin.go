@@ -210,7 +210,7 @@ func vendorFullsendBinary(ctx context.Context, client forge.Client, printer *ui.
 		"-o", tmpBinary.Name(),
 		"./cmd/fullsend/",
 	)
-	buildCmd.Env = append(os.Environ(), "GOOS=linux", "GOARCH=amd64", "CGO_ENABLED=0")
+	buildCmd.Env = append(os.Environ(), "GOTOOLCHAIN=auto", "GOOS=linux", "GOARCH=amd64", "CGO_ENABLED=0")
 	buildCmd.Stderr = os.Stderr
 	if err := buildCmd.Run(); err != nil {
 		printer.StepFail("Cross-compilation failed")

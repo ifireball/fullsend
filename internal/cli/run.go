@@ -206,9 +206,14 @@ func runAgent(agentName, fullsendDir, outputBase, targetRepo string, printer *ui
 	var validationPassed bool
 
 	// Post-script runs after sandbox cleanup (defers are LIFO).
+	// When a validation_loop is configured, the post-script only runs if
+	// validation passed (ADR 0022). When no validation_loop exists (e.g.,
+	// the code agent), the post-script runs unconditionally after a
+	// successful agent run — the post-script itself is responsible for
+	// any output checks it needs.
 	if h.PostScript != "" {
 		defer func() {
-			if !validationPassed {
+			if h.ValidationLoop != nil && !validationPassed {
 				printer.StepWarn("Skipping post-script: validation did not pass")
 				return
 			}

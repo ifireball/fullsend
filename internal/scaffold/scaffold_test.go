@@ -2,10 +2,14 @@ package scaffold
 
 import (
 	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/fullsend-ai/fullsend/internal/harness"
 )
 
 func TestFullsendRepoFilesExist(t *testing.T) {
@@ -159,6 +163,46 @@ func TestTriageSchemaContent(t *testing.T) {
 	assert.Contains(t, s, "insufficient")
 	assert.Contains(t, s, "duplicate")
 	assert.Contains(t, s, "sufficient")
+}
+
+func TestHarnessesLoadAndValidate(t *testing.T) {
+	// Extract the full scaffold to a temp dir so harness.Load can resolve
+	// relative paths and validate that referenced files exist. This catches
+	// harness validation errors (e.g., missing fields, invalid combinations)
+	// the same way the runner would at startup.
+	dir := t.TempDir()
+	err := WalkFullsendRepo(func(path string, content []byte) error {
+		dest := filepath.Join(dir, path)
+		if mkErr := os.MkdirAll(filepath.Dir(dest), 0o755); mkErr != nil {
+			return mkErr
+		}
+		return os.WriteFile(dest, content, 0o644)
+	})
+	require.NoError(t, err, "extracting scaffold")
+
+	// Find all harness YAML files.
+	entries, err := os.ReadDir(filepath.Join(dir, "harness"))
+	require.NoError(t, err)
+
+	var loaded int
+	for _, e := range entries {
+		if e.IsDir() || (!strings.HasSuffix(e.Name(), ".yaml") && !strings.HasSuffix(e.Name(), ".yml")) {
+			continue
+		}
+		t.Run(e.Name(), func(t *testing.T) {
+			harnessPath := filepath.Join(dir, "harness", e.Name())
+			h, err := harness.Load(harnessPath)
+			require.NoError(t, err, "Load should succeed")
+
+			err = h.ResolveRelativeTo(dir)
+			require.NoError(t, err, "ResolveRelativeTo should succeed")
+
+			err = h.ValidateFilesExist()
+			require.NoError(t, err, "ValidateFilesExist should succeed")
+		})
+		loaded++
+	}
+	assert.True(t, loaded >= 2, "expected at least 2 harnesses, got %d", loaded)
 }
 
 func TestValidateTriageDeleted(t *testing.T) {
