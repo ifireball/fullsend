@@ -19,7 +19,6 @@ on:
 # version.  Branch pushes and PRs still respect the paths filter.
 
 env:
-  REGISTRY: ghcr.io
   IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/fullsend-sandbox
 
 jobs:

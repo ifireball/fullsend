@@ -48,6 +48,10 @@ RUN curl -fsSL https://claude.ai/install.sh | bash
 ARG PROTECTAI_MODEL_REV=e6535ca4ce3ba852083e75ec585d7c8aeb4be4c5
 ARG PROTECTAI_MODEL_DIR=/opt/fullsend/models/protectai-deberta-v3/onnx
 ARG PROTECTAI_MODEL_ONNX_SHA256=f0ea7f239f765aedbde7c9e163a7cb38a79c5b8853d3f76db5152172047b228c
+ARG PROTECTAI_CONFIG_SHA256=3093743035223c46b1497a72e939e56fa0a50afbd7bafbf7eb8aad060b8d23f8
+ARG PROTECTAI_TOKENIZER_SHA256=752fe5f0d5678ad563e1bd2ecc1ddf7a3ba7e2024d0ac1dba1a72975e26dff2f
+ARG PROTECTAI_SPECIAL_TOKENS_SHA256=b2f1b2f15f29a6b6d9d6ea4eca1675d2c231a71477f151d48f79cc83a625ba21
+ARG PROTECTAI_TOKENIZER_CONFIG_SHA256=77d3dd1a9c30397a06545251ed9274bd92e4a85feb98497eeed50c920f962274
 RUN mkdir -p "${PROTECTAI_MODEL_DIR}" \
     && for f in model.onnx config.json tokenizer.json special_tokens_map.json tokenizer_config.json; do \
          curl -fsSL --retry 3 --retry-delay 5 \
@@ -55,11 +59,11 @@ RUN mkdir -p "${PROTECTAI_MODEL_DIR}" \
            -o "${PROTECTAI_MODEL_DIR}/${f}"; \
        done \
     && echo "${PROTECTAI_MODEL_ONNX_SHA256}  ${PROTECTAI_MODEL_DIR}/model.onnx" | sha256sum -c - \
-    && /usr/bin/python3 -c "\
-import json; cfg = json.load(open('${PROTECTAI_MODEL_DIR}/config.json')); \
-assert cfg.get('id2label', {}).get('1') == 'INJECTION', \
-  f\"label ordering mismatch: id2label={cfg.get('id2label')}\"" \
-    && echo "ProtectAI DeBERTa-v3 model downloaded at rev ${PROTECTAI_MODEL_REV} (model.onnx SHA256-verified, label ordering verified)"
+    && echo "${PROTECTAI_CONFIG_SHA256}  ${PROTECTAI_MODEL_DIR}/config.json" | sha256sum -c - \
+    && echo "${PROTECTAI_TOKENIZER_SHA256}  ${PROTECTAI_MODEL_DIR}/tokenizer.json" | sha256sum -c - \
+    && echo "${PROTECTAI_SPECIAL_TOKENS_SHA256}  ${PROTECTAI_MODEL_DIR}/special_tokens_map.json" | sha256sum -c - \
+    && echo "${PROTECTAI_TOKENIZER_CONFIG_SHA256}  ${PROTECTAI_MODEL_DIR}/tokenizer_config.json" | sha256sum -c - \
+    && echo "ProtectAI DeBERTa-v3 model downloaded at rev ${PROTECTAI_MODEL_REV} (all files SHA256-verified)"
 
 # ---------------------------------------------------------------------------
 # ONNX Runtime shared library — loaded by hugot at runtime.
@@ -135,7 +139,8 @@ ENV GIT_SSL_CAINFO="/etc/openshell-tls/ca-bundle.pem" \
     SSL_CERT_FILE="/etc/openshell-tls/ca-bundle.pem" \
     REQUESTS_CA_BUNDLE="/etc/openshell-tls/ca-bundle.pem" \
     CURL_CA_BUNDLE="/etc/openshell-tls/ca-bundle.pem" \
-    NODE_EXTRA_CA_CERTS="/etc/openshell-tls/ca-bundle.pem"
+    NODE_EXTRA_CA_CERTS="/etc/openshell-tls/ca-bundle.pem" \
+    HF_HUB_OFFLINE="1"
 
 # Switch back to the sandbox user.
 USER sandbox

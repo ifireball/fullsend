@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/knights-analytics/hugot/pipelines"
 
@@ -84,7 +85,8 @@ func (s *ONNXGuardScanner) Scan(text string) ScanResult {
 		sents = splitLongSentences(sents)
 		maxScore, err = s.maxSentenceScore(ctx, sents)
 	} else {
-		maxScore, err = s.scoreText(ctx, text)
+		chunks := splitLongSentences([]string{text})
+		maxScore, err = s.maxSentenceScore(ctx, chunks)
 	}
 
 	if err != nil {
@@ -127,10 +129,13 @@ func (s *ONNXGuardScanner) scoreText(ctx context.Context, text string) (float64,
 			return float64(o.Score), nil
 		}
 	}
-	return 0, nil
+	return 0, fmt.Errorf("INJECTION label not found in pipeline output")
 }
 
-const maxSentenceChars = 1500
+// maxSentenceChars caps the byte length of text chunks sent to DeBERTa.
+// DeBERTa-v3 has a 512-token limit; 1000 bytes is ~250-400 tokens for
+// ASCII/Latin, staying within the window with headroom.
+const maxSentenceChars = 1000
 
 func splitLongSentences(sents []string) []string {
 	result := make([]string, 0, len(sents))
@@ -148,6 +153,10 @@ func splitLongSentences(sents []string) []string {
 			}
 			if cut := strings.LastIndexByte(s[start:end], ' '); cut > 0 {
 				end = start + cut
+			} else {
+				for end > start && !utf8.RuneStart(s[end]) {
+					end--
+				}
 			}
 			result = append(result, s[start:end])
 		}

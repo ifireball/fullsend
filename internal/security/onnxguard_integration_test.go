@@ -29,10 +29,11 @@ func initTestPipeline() {
 	}
 	ortLibPath := os.Getenv("ORT_LIB_PATH")
 	if ortLibPath == "" {
-		ortLibPath = "/tmp/onnxruntime-osx-arm64-1.24.1/lib"
+		ortLibPath = "/usr/lib"
 	}
 
 	if _, err := os.Stat(testModelPath); err != nil {
+		fmt.Fprintf(os.Stderr, "ONNX test init: model path %s not found: %v\n", testModelPath, err)
 		return
 	}
 
@@ -42,6 +43,7 @@ func initTestPipeline() {
 		options.WithIntraOpNumThreads(4),
 	)
 	if err != nil {
+		fmt.Fprintf(os.Stderr, "ONNX test init: ORT session failed (ORT_LIB_PATH=%s): %v\n", ortLibPath, err)
 		return
 	}
 
@@ -55,6 +57,7 @@ func initTestPipeline() {
 	}
 	p, err := hugot.NewPipeline(session, config)
 	if err != nil {
+		fmt.Fprintf(os.Stderr, "ONNX test init: pipeline creation failed: %v\n", err)
 		session.Destroy()
 		return
 	}

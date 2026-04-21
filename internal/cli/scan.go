@@ -107,7 +107,7 @@ Critical findings exit non-zero. Non-critical findings are sanitized.`,
 			if security.MLScanAvailable() {
 				printer.StepStart("Running ML injection scan")
 				for name, text := range fields {
-					mlResult := security.RunMLScan(text)
+					mlResult := security.RunMLScan(text, false)
 					if !mlResult.Safe {
 						for i := range mlResult.Findings {
 							mlResult.Findings[i].Detail = fmt.Sprintf("[%s] %s", name, mlResult.Findings[i].Detail)

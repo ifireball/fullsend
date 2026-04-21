@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 )
 
 var (
@@ -112,7 +113,7 @@ func hasSentencePunct(text string) bool {
 
 func tokenType(t *token) string {
 	typ := reNumeric.ReplaceAllString(strings.ToLower(t.Tok), "##number##")
-	if len(typ) == 1 {
+	if utf8.RuneCountInString(typ) == 1 {
 		return typ
 	}
 	return strings.Replace(typ, ",", "", -1)
@@ -120,7 +121,7 @@ func tokenType(t *token) string {
 
 func typeNoPeriod(t *token) string {
 	typ := tokenType(t)
-	if len(typ) > 1 && typ[len(typ)-1] == '.' {
+	if utf8.RuneCountInString(typ) > 1 && typ[len(typ)-1] == '.' {
 		return typ[:len(typ)-1]
 	}
 	return typ

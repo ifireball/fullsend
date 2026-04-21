@@ -15,11 +15,15 @@ import (
 
 var (
 	mlScanner     *ONNXGuardScanner
+	mlSession     *hugot.Session
 	mlScannerOnce sync.Once
 	mlScannerErr  error
+	mlWarnOnce    sync.Once
 )
 
 func initMLScanner() {
+	os.Setenv("HF_HUB_OFFLINE", "1")
+
 	modelPath := os.Getenv("MODEL_PATH")
 	if modelPath == "" {
 		modelPath = "/opt/fullsend/models/protectai-deberta-v3/onnx"
@@ -61,6 +65,7 @@ func initMLScanner() {
 		return
 	}
 
+	mlSession = session
 	mlScanner = scanner
 }
 
@@ -68,15 +73,43 @@ func initMLScanner() {
 func MLScanAvailable() bool { return true }
 
 // RunMLScan runs the ONNX-based prompt injection scanner. Initializes the
-// model session on first call (lazy singleton). Returns safe=true if the
-// scanner fails to initialize (fail-open for Path A).
-func RunMLScan(text string) ScanResult {
+// model session on first call (lazy singleton).
+//
+// When required is false (Path A / CLI pre-step), initialization failures
+// are fail-open: returns Safe=true with a stderr warning.
+//
+// When required is true (sandbox / Path B), initialization failures are
+// fail-closed: returns Safe=false with a critical finding, since a missing
+// or broken scanner inside the sandbox indicates possible tampering.
+func RunMLScan(text string, required bool) ScanResult {
 	mlScannerOnce.Do(initMLScanner)
 
 	if mlScannerErr != nil {
-		fmt.Fprintf(os.Stderr, "WARN: ML scanner unavailable: %v\n", mlScannerErr)
+		if required {
+			return ScanResult{
+				Safe: false,
+				Findings: []Finding{{
+					Scanner:  "llm_guard",
+					Name:     "scanner_unavailable",
+					Severity: "critical",
+					Detail:   fmt.Sprintf("ML scanner required but unavailable: %v", mlScannerErr),
+					Position: -1,
+				}},
+			}
+		}
+		mlWarnOnce.Do(func() {
+			fmt.Fprintf(os.Stderr, "WARN: ML scanner unavailable: %v\n", mlScannerErr)
+		})
 		return ScanResult{Safe: true}
 	}
 
 	return mlScanner.Scan(text)
+}
+
+// DestroyMLScanner releases the ORT session resources.
+func DestroyMLScanner() {
+	if mlSession != nil {
+		mlSession.Destroy()
+		mlSession = nil
+	}
 }

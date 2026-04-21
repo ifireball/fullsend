@@ -6,6 +6,9 @@ package security
 func MLScanAvailable() bool { return false }
 
 // RunMLScan is a no-op stub when ONNX runtime is not available.
-func RunMLScan(_ string) ScanResult {
+func RunMLScan(_ string, _ bool) ScanResult {
 	return ScanResult{Safe: true}
 }
+
+// DestroyMLScanner is a no-op stub when ONNX runtime is not available.
+func DestroyMLScanner() {}
