@@ -523,7 +523,7 @@ func runUninstall(ctx context.Context, client forge.Client, printer *ui.Printer,
 		layers.NewWorkflowsLayer(org, client, printer, ""),
 		layers.NewSecretsLayer(org, client, nil, printer),
 		layers.NewInferenceLayer(org, client, nil, printer),
-		layers.NewDispatchTokenLayer(org, client, "", nil, printer),
+		layers.NewDispatchTokenLayer(org, client, "", nil, printer, nil),
 		layers.NewEnrollmentLayer(org, client, nil, nil, printer),
 	)
 
@@ -671,7 +671,7 @@ func buildLayerStack(
 		layers.NewWorkflowsLayer(org, client, printer, user),
 		layers.NewSecretsLayer(org, client, agentCreds, printer),
 		layers.NewInferenceLayer(org, client, inferenceProvider, printer),
-		layers.NewDispatchTokenLayer(org, client, dispatchToken, enrolledRepoIDs, printer),
+		layers.NewDispatchTokenLayer(org, client, dispatchToken, enrolledRepoIDs, printer, nil),
 		layers.NewEnrollmentLayer(org, client, enabledRepos, cfg.DisabledRepos(), printer),
 	)
 }
