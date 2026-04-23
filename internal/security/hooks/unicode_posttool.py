@@ -58,10 +58,12 @@ _CHECKS: list[tuple[str, str, re.Pattern]] = [
         re.compile(r"\x1b\[[\x30-\x3f]*[\x20-\x2f]*[\x40-\x7e]"),
     ),
     # OSC: terminal hyperlinks, window title injection.
+    # Uses negated class [^\x1b\x07]* instead of .*? to avoid O(n^2)
+    # backtracking on dense unterminated ESC] sequences.
     (
         "osc_escape",
         "medium",
-        re.compile(r"\x1b\].*?(?:\x1b\\|\x07)"),
+        re.compile(r"\x1b\][^\x1b\x07]*(?:\x1b\\|\x07)"),
     ),
     (
         "null_byte",
@@ -144,6 +146,24 @@ def scan_text(text: str) -> tuple[str, list[dict]]:
             }
         )
         result = nfkc
+
+        # Second pass: NFKC can reconstruct escape sequences from fullwidth
+        # characters (e.g. fullwidth [ + ESC → valid CSI). Re-check ANSI/OSC.
+        for name, severity, pattern in _CHECKS:
+            if name not in ("ansi_escape", "osc_escape"):
+                continue
+            matches = pattern.findall(result)
+            if not matches:
+                continue
+            total_chars = sum(len(m) for m in matches)
+            findings.append(
+                {
+                    "name": name,
+                    "severity": severity,
+                    "detail": f"{total_chars} {name.replace('_', ' ')} character(s) removed (post-NFKC)",
+                }
+            )
+            result = pattern.sub("", result)
 
     return result, findings
 

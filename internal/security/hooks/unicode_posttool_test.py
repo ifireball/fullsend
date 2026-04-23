@@ -159,6 +159,43 @@ class TestVariationSelector(unittest.TestCase):
         self.assertIn("variation_selector", out["metadata"]["categories"])
 
 
+class TestNFKCEscapeBypass(unittest.TestCase):
+    def test_fullwidth_bracket_csi_detected_post_nfkc(self):
+        """R2-2: Fullwidth [ + ESC must be caught after NFKC normalization."""
+        # ESC + fullwidth [ (U+FF3B) + "31m" → NFKC → ESC[31m (valid CSI)
+        payload = "\x1b\uff3b31m"
+        rc, stdout, _ = run_hook(f"text{payload}more")
+        self.assertEqual(rc, 0)
+        out = json.loads(stdout)
+        self.assertNotIn("\x1b", out["tool_result"])
+        self.assertIn("ansi_escape", out["metadata"]["categories"])
+        self.assertIn("fullwidth", out["metadata"]["categories"])
+
+    def test_fullwidth_bracket_osc_detected_post_nfkc(self):
+        """R2-2: Fullwidth ] + ESC must be caught after NFKC normalization."""
+        # ESC + fullwidth ] (U+FF3D) + OSC payload + BEL
+        payload = "\x1b\uff3d8;;http://evil.com\x07"
+        rc, stdout, _ = run_hook(f"before{payload}after")
+        self.assertEqual(rc, 0)
+        out = json.loads(stdout)
+        self.assertNotIn("evil.com", out["tool_result"])
+        self.assertIn("osc_escape", out["metadata"]["categories"])
+
+
+class TestOSCPerformance(unittest.TestCase):
+    def test_unterminated_osc_linear_time(self):
+        """R2-3: Dense unterminated ESC] must not cause quadratic backtracking."""
+        import time
+
+        # 10K unterminated ESC] sequences — should complete in well under 1s
+        payload = "\x1b]AAAA" * 10000
+        start = time.time()
+        rc, stdout, _ = run_hook(payload)
+        elapsed = time.time() - start
+        self.assertEqual(rc, 0)
+        self.assertLess(elapsed, 1.0, f"OSC scan took {elapsed:.2f}s, expected < 1s")
+
+
 class TestProtocol(unittest.TestCase):
     def test_no_decoded_text_in_stdout(self):
         """C1: Decoded tag char text must NOT appear in stdout (injection vector)."""
