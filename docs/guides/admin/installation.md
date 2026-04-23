@@ -8,7 +8,7 @@ This guide walks through installing fullsend in a GitHub organization and enroll
 - **GitHub CLI** (`gh`) authenticated:
 
   ```bash
-  gh auth refresh -s admin:org,repo,workflow,delete_repo
+  gh auth refresh -s admin:org,repo,workflow
   ```
 
 - **fullsend CLI** — download the latest binary from [GitHub Releases](https://github.com/fullsend-ai/fullsend/releases)
@@ -24,7 +24,8 @@ Create a service account with the `Vertex AI User` role and download its key:
 ```bash
 export GCP_PROJECT="<gcp-project>"
 export ORG_NAME="<org-name>"
-export REPO_NAME="<repo-name>" # create a public repo for testing
+export REPO_NAME="<repo-name>"
+# gh repo create "$ORG_NAME/$REPO_NAME" --public
 gcloud iam service-accounts create "$ORG_NAME" \
   --display-name="Fullsend for $ORG_NAME" \
   --project="$GCP_PROJECT"
@@ -46,7 +47,8 @@ The installer is interactive. It will open multiple browser windows to create an
 
 Near the end, the installer opens a browser to create a fine-grained personal access token (dispatch token). When creating it, make sure to grant **Actions: Read and write** permission scoped to the `.fullsend` repository — otherwise the verification step will fail with a 404.
 
-If the installer fails partway through, run `fullsend admin uninstall "$ORG_NAME"` to clean up before retrying.
+If the installer fails partway through, run `fullsend admin uninstall "$ORG_NAME"` to clean up before retrying. You will need to
+refresh the permissions to add `delete_repo`: `gh auth refresh -s delete_repo`.
 
 ```bash
 fullsend admin install "$ORG_NAME" \
@@ -54,9 +56,10 @@ fullsend admin install "$ORG_NAME" \
   --gcp-project "$GCP_PROJECT" \
   --gcp-region global \
   --gcp-credentials-file sa-key.json
+rm sa-key.json
 ```
 
-After the installer ends you need to change the `.fullsend` repository visibility to public.
+**Note**: the `--repo` flag can be repeated to onboard multiple repositories.
 
 ## 3. Merge enrollment PRs
 
