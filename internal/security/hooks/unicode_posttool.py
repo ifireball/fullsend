@@ -160,7 +160,9 @@ def scan_text(text: str) -> tuple[str, list[dict]]:
                 {
                     "name": name,
                     "severity": severity,
-                    "detail": f"{total_chars} {name.replace('_', ' ')} character(s) removed (post-NFKC)",
+                    "detail": (
+                        f"{total_chars} {name.replace('_', ' ')} character(s) removed (post-NFKC)"
+                    ),
                 }
             )
             result = pattern.sub("", result)
