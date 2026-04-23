@@ -49,8 +49,19 @@ function loadTurnstileScript(): Promise<void> {
  * Runs an invisible Turnstile challenge and resolves with the one-time token for
  * `POST /api/oauth/token` (Worker validates with siteverify).
  */
-export async function obtainTurnstileToken(siteKey: string): Promise<string> {
+export async function obtainTurnstileToken(
+  siteKey: string,
+  signal?: AbortSignal,
+): Promise<string> {
+  if (signal?.aborted) {
+    throw new DOMException("Aborted", "AbortError");
+  }
+
   await loadTurnstileScript();
+  if (signal?.aborted) {
+    throw new DOMException("Aborted", "AbortError");
+  }
+
   const turnstile = turnstileGlobal();
   if (!turnstile?.render || !turnstile.execute) {
     throw new Error("Turnstile API unavailable");
@@ -65,7 +76,14 @@ export async function obtainTurnstileToken(siteKey: string): Promise<string> {
     host.style.top = "0";
     document.body.appendChild(host);
 
+    let widgetId: string | undefined;
+
+    const detachAbort = () => {
+      signal?.removeEventListener("abort", onAbort);
+    };
+
     const teardown = (id: string | null) => {
+      detachAbort();
       if (id) {
         try {
           turnstile.remove(id);
@@ -76,8 +94,14 @@ export async function obtainTurnstileToken(siteKey: string): Promise<string> {
       host.remove();
     };
 
+    const onAbort = () => {
+      teardown(widgetId ?? null);
+      reject(new DOMException("Aborted", "AbortError"));
+    };
+
+    signal?.addEventListener("abort", onAbort, { once: true });
+
     const run = () => {
-      let widgetId: string | undefined;
       try {
         widgetId = turnstile.render(host, {
           sitekey: siteKey,

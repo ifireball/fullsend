@@ -287,7 +287,7 @@ describe("completeGithubOAuthFromHandoff", () => {
     const r = await completeGithubOAuthFromHandoff();
 
     expect(r).toEqual({ ok: true });
-    expect(obtainTurnstileToken).toHaveBeenCalledWith("site-key-1");
+    expect(obtainTurnstileToken).toHaveBeenCalledWith("site-key-1", undefined);
     expect(refreshSession).toHaveBeenCalledOnce();
     expect(loadToken()).toEqual({
       accessToken: "access-xyz",

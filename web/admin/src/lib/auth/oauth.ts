@@ -1,13 +1,29 @@
 import { challengeS256, randomVerifier } from "./pkce";
 import { refreshSession } from "./session";
 import { obtainTurnstileToken } from "./turnstile";
-import { saveToken } from "./tokenStore";
+import { clearSession, saveToken } from "./tokenStore";
 
 const PKCE_VERIFIER_KEY = "fullsend_admin_pkce_verifier";
 const OAUTH_STATE_KEY = "fullsend_admin_oauth_state";
 const OAUTH_DOC_HANDOFF_KEY = "fullsend_admin_oauth_doc_handoff";
 /** Hash route to restore after successful OAuth (e.g. `#/orgs`). */
 const INTENDED_HASH_KEY = "fullsend_admin_intended_hash";
+
+/** Returned when `AbortSignal` aborts during `completeGithubOAuthFromHandoff` (user chose another account). */
+export const SIGNING_IN_CANCELLED_MESSAGE =
+  "Signing in was cancelled." as const;
+
+/** Clears OAuth-related `sessionStorage` so a cancelled sign-in can restart cleanly. */
+export function clearSigningInBrowserState(): void {
+  clearOAuthState();
+  clearIntendedHashStash();
+  try {
+    sessionStorage.removeItem(PKCE_VERIFIER_KEY);
+    sessionStorage.removeItem(OAUTH_DOC_HANDOFF_KEY);
+  } catch {
+    /* ignore */
+  }
+}
 
 const DEFAULT_ADMIN_BASE = "/admin/";
 
@@ -171,11 +187,25 @@ export type OAuthCompleteResult =
   | { ok: true }
   | { ok: false; error: string };
 
+export type CompleteGithubOAuthOptions = {
+  /** When aborted (e.g. user picks “different account”), token exchange is skipped. */
+  signal?: AbortSignal;
+};
+
+function isAbortError(e: unknown): boolean {
+  return e instanceof DOMException && e.name === "AbortError";
+}
+
 /**
  * Completes GitHub OAuth using a one-shot document handoff (see
  * `consumeOAuthParamsFromDocumentUrl`). Call only after URL cleanup.
  */
-export async function completeGithubOAuthFromHandoff(): Promise<OAuthCompleteResult> {
+export async function completeGithubOAuthFromHandoff(
+  options?: CompleteGithubOAuthOptions,
+): Promise<OAuthCompleteResult> {
+  const signal = options?.signal;
+  const aborted = () => Boolean(signal?.aborted);
+
   const handoff = takeDocHandoff();
   if (!handoff) {
     return { ok: false, error: "Missing OAuth handoff — try signing in again." };
@@ -211,9 +241,12 @@ export async function completeGithubOAuthFromHandoff(): Promise<OAuthCompleteRes
 
   let turnstile_token: string;
   try {
-    turnstile_token = await obtainTurnstileToken(expanded.k);
+    turnstile_token = await obtainTurnstileToken(expanded.k, signal);
   } catch (e) {
     clearOAuthState();
+    if (isAbortError(e)) {
+      return { ok: false, error: SIGNING_IN_CANCELLED_MESSAGE };
+    }
     return {
       ok: false,
       error:
@@ -221,6 +254,11 @@ export async function completeGithubOAuthFromHandoff(): Promise<OAuthCompleteRes
           ? e.message
           : "Turnstile verification failed — try signing in again.",
     };
+  }
+
+  if (aborted()) {
+    clearOAuthState();
+    return { ok: false, error: SIGNING_IN_CANCELLED_MESSAGE };
   }
 
   let res: Response;
@@ -234,9 +272,13 @@ export async function completeGithubOAuthFromHandoff(): Promise<OAuthCompleteRes
         code_verifier: verifier,
         turnstile_token,
       }),
+      signal,
     });
   } catch (e) {
     clearOAuthState();
+    if (isAbortError(e)) {
+      return { ok: false, error: SIGNING_IN_CANCELLED_MESSAGE };
+    }
     return {
       ok: false,
       error:
@@ -266,6 +308,11 @@ export async function completeGithubOAuthFromHandoff(): Promise<OAuthCompleteRes
     return { ok: false, error: "Token response missing access_token." };
   }
 
+  if (aborted()) {
+    clearOAuthState();
+    return { ok: false, error: SIGNING_IN_CANCELLED_MESSAGE };
+  }
+
   const token_type =
     typeof body.token_type === "string" ? body.token_type : "bearer";
   const expires_in =
@@ -279,6 +326,12 @@ export async function completeGithubOAuthFromHandoff(): Promise<OAuthCompleteRes
     expiresAt,
   });
   clearOAuthState();
+
+  if (aborted()) {
+    clearSession();
+    return { ok: false, error: SIGNING_IN_CANCELLED_MESSAGE };
+  }
+
   await refreshSession();
   return { ok: true };
 }
