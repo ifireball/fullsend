@@ -197,6 +197,43 @@ function isAbortError(e: unknown): boolean {
 }
 
 /**
+ * Reads JSON from a `fetch` `Response` while honoring `AbortSignal` (unlike `res.json()` alone).
+ * Malformed JSON yields `{}` unless the read was aborted.
+ */
+async function readJsonBodyWithSignal(
+  res: Response,
+  signal?: AbortSignal,
+): Promise<Record<string, unknown>> {
+  if (!signal) {
+    return (await res.json().catch(() => ({}))) as Record<string, unknown>;
+  }
+  if (signal.aborted) {
+    throw new DOMException("Aborted", "AbortError");
+  }
+
+  let rejectAbort!: (e: DOMException) => void;
+  const abortPromise = new Promise<never>((_, reject) => {
+    rejectAbort = reject;
+  });
+  const onAbort = () =>
+    rejectAbort(new DOMException("Aborted", "AbortError"));
+  signal.addEventListener("abort", onAbort, { once: true });
+
+  try {
+    const raw = await Promise.race([
+      res.json().catch(() => ({})),
+      abortPromise,
+    ]);
+    if (signal.aborted) {
+      throw new DOMException("Aborted", "AbortError");
+    }
+    return raw as Record<string, unknown>;
+  } finally {
+    signal.removeEventListener("abort", onAbort);
+  }
+}
+
+/**
  * Completes GitHub OAuth using a one-shot document handoff (see
  * `consumeOAuthParamsFromDocumentUrl`). Call only after URL cleanup.
  */
@@ -288,7 +325,22 @@ export async function completeGithubOAuthFromHandoff(
     };
   }
 
-  const body = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+  let body: Record<string, unknown>;
+  try {
+    body = await readJsonBodyWithSignal(res, signal);
+  } catch (e) {
+    clearOAuthState();
+    if (isAbortError(e)) {
+      return { ok: false, error: SIGNING_IN_CANCELLED_MESSAGE };
+    }
+    return {
+      ok: false,
+      error:
+        e instanceof Error
+          ? e.message
+          : "Failed to read token exchange response.",
+    };
+  }
 
   if (!res.ok) {
     const desc =
@@ -306,11 +358,6 @@ export async function completeGithubOAuthFromHandoff(
   if (!access_token) {
     clearOAuthState();
     return { ok: false, error: "Token response missing access_token." };
-  }
-
-  if (aborted()) {
-    clearOAuthState();
-    return { ok: false, error: SIGNING_IN_CANCELLED_MESSAGE };
   }
 
   const token_type =

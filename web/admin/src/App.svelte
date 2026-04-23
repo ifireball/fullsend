@@ -28,13 +28,14 @@
 
   /** Aborts in-flight OAuth completion (Turnstile + token exchange). */
   let oauthBootAbort: AbortController | null = null;
+  /** Bumps on each mount cleanup so a disposed boot’s `finally` cannot clear a newer mount’s boot state. */
+  let oauthBootSeq = 0;
 
   function cancelSigningInAsDifferentAccount(): void {
     oauthErr = null;
     oauthBootAbort?.abort();
     signOut();
     clearSigningInBrowserState();
-    authBootPending.set(false);
   }
 
   async function beginGithubSignIn(): Promise<void> {
@@ -52,6 +53,9 @@
   onMount(() => {
     const onGithub401 = () => signOut({ suggestReauth: true });
     window.addEventListener("fullsend:github-unauthorized", onGithub401);
+
+    const seq = (oauthBootSeq += 1);
+    authBootPending.set(true);
 
     oauthBootAbort = new AbortController();
     const signal = oauthBootAbort.signal;
@@ -80,7 +84,7 @@
         }
         await refreshSession();
       } finally {
-        if (!signal.aborted) {
+        if (seq === oauthBootSeq) {
           authBootPending.set(false);
         }
       }
@@ -90,6 +94,8 @@
       window.removeEventListener("fullsend:github-unauthorized", onGithub401);
       oauthBootAbort?.abort();
       oauthBootAbort = null;
+      oauthBootSeq += 1;
+      authBootPending.set(false);
     };
   });
 </script>
