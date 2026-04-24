@@ -57,7 +57,7 @@ _GO_TEST_FAIL_RE = re.compile(r"^FAIL\s+", re.MULTILINE)
 
 # pytest output patterns
 _PYTEST_SUMMARY_RE = re.compile(r"=+\s+(\d+)\s+passed.*?in\s+([\d.]+)s\s+=+", re.MULTILINE)
-_PYTEST_FAIL_RE = re.compile(r"=+\s+.*?(\d+)\s+failed", re.MULTILINE)
+_PYTEST_FAIL_RE = re.compile(r"=+\s+.*?(\d+)\s+(?:failed|error)", re.MULTILINE)
 
 
 def log_suppression(command: str, summary: str) -> None:
@@ -82,8 +82,6 @@ def log_suppression(command: str, summary: str) -> None:
 
 
 def suppress_scan_secrets(output: str) -> str | None:
-    if not output.strip():
-        return "scan-secrets: passed (no findings)"
     lower = output.lower()
     if "no leaks" in lower or "no secrets" in lower or "0 findings" in lower:
         return "scan-secrets: passed (no findings)"
@@ -92,7 +90,7 @@ def suppress_scan_secrets(output: str) -> str | None:
 
 def suppress_gitleaks(output: str) -> str | None:
     lower = output.lower()
-    if not output.strip() or "no leaks" in lower:
+    if "no leaks" in lower:
         return "gitleaks: passed (no leaks detected)"
     return None
 
@@ -161,7 +159,7 @@ def suppress_npm_test(output: str) -> str | None:
     lower = output.lower()
     if "fail" in lower or "error" in lower:
         return None
-    if "passing" in lower or "tests passed" in lower or not output.strip():
+    if "passing" in lower or "tests passed" in lower:
         return "tests: passed"
     return None
 
@@ -170,7 +168,9 @@ def suppress_make_test(output: str) -> str | None:
     lower = output.lower()
     if "fail" in lower or "error" in lower:
         return None
-    return "tests: passed"
+    if "ok" in lower or "pass" in lower:
+        return "tests: passed"
+    return None
 
 
 def suppress_go_vet(output: str) -> str | None:

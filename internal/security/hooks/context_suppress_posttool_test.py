@@ -42,10 +42,9 @@ class TestScanSecrets:
         assert out is not None
         assert out["tool_result"] == "scan-secrets: passed (no findings)"
 
-    def test_empty_output(self):
+    def test_empty_output_passthrough(self):
         out = run_hook(make_input("scan-secrets foo.go", ""))
-        assert out is not None
-        assert "passed" in out["tool_result"]
+        assert out is None  # empty output → passthrough (scanner may have crashed)
 
     def test_failure_passthrough(self):
         out = run_hook(
@@ -66,10 +65,9 @@ class TestGitleaks:
         assert out is not None
         assert "passed" in out["tool_result"]
 
-    def test_empty_output(self):
+    def test_empty_output_passthrough(self):
         out = run_hook(make_input("gitleaks detect --source .", ""))
-        assert out is not None
-        assert "passed" in out["tool_result"]
+        assert out is None  # empty output → passthrough (scanner may have crashed)
 
 
 # --- pre-commit ---
