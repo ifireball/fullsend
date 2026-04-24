@@ -1,8 +1,11 @@
-import { describe, expect, it } from "vitest";
+import type { Octokit } from "@octokit/rest";
+import { describe, expect, it, vi } from "vitest";
 import {
+  clearOAuthScopeHeaderCache,
   computePreflight,
   parseXOauthScopesHeader,
   preflightOk,
+  readTokenScopesHeaderCached,
 } from "./preflight";
 
 describe("parseXOauthScopesHeader", () => {
@@ -35,5 +38,29 @@ describe("computePreflight", () => {
   it("ok when all present", () => {
     const r = computePreflight(["repo"], ["repo", "read:org"]);
     expect(preflightOk(r)).toBe(true);
+  });
+});
+
+describe("readTokenScopesHeaderCached", () => {
+  it("issues one HEAD /user per access token until cache clear", async () => {
+    clearOAuthScopeHeaderCache();
+    const request = vi.fn().mockResolvedValue({
+      headers: { "x-oauth-scopes": "repo, workflow" },
+    });
+    const octokit = { request } as unknown as Octokit;
+
+    await expect(readTokenScopesHeaderCached(octokit, "tok-a")).resolves.toEqual([
+      "repo",
+      "workflow",
+    ]);
+    await readTokenScopesHeaderCached(octokit, "tok-a");
+    expect(request).toHaveBeenCalledTimes(1);
+
+    await readTokenScopesHeaderCached(octokit, "tok-b");
+    expect(request).toHaveBeenCalledTimes(2);
+
+    clearOAuthScopeHeaderCache();
+    await readTokenScopesHeaderCached(octokit, "tok-a");
+    expect(request).toHaveBeenCalledTimes(3);
   });
 });

@@ -53,3 +53,35 @@ export async function readTokenScopesHeader(octokit: Octokit): Promise<string[] 
   }
   return parseXOauthScopesHeader(joined);
 }
+
+let scopeHeaderCacheToken: string | null = null;
+/** `undefined` means unset; `null` is a valid cached “no scopes header” result. */
+let scopeHeaderCacheResult: string[] | null | undefined;
+
+/** Cleared on sign-out so the next session always re-reads headers. */
+export function clearOAuthScopeHeaderCache(): void {
+  scopeHeaderCacheToken = null;
+  scopeHeaderCacheResult = undefined;
+}
+
+/**
+ * Same as {@link readTokenScopesHeader}, but at most **one** `HEAD /user` per stored
+ * access token for the SPA lifetime (until {@link clearOAuthScopeHeaderCache}).
+ * Org list re-runs preflight whenever `displayedOrgs` changes; without this, each run
+ * would hit GitHub’s `/user` quota again.
+ */
+export async function readTokenScopesHeaderCached(
+  octokit: Octokit,
+  accessToken: string,
+): Promise<string[] | null> {
+  if (!accessToken) {
+    return readTokenScopesHeader(octokit);
+  }
+  if (scopeHeaderCacheToken === accessToken && scopeHeaderCacheResult !== undefined) {
+    return scopeHeaderCacheResult;
+  }
+  const result = await readTokenScopesHeader(octokit);
+  scopeHeaderCacheToken = accessToken;
+  scopeHeaderCacheResult = result;
+  return result;
+}

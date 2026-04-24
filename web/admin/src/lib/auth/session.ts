@@ -1,5 +1,7 @@
 import { derived, writable } from "svelte/store";
+import { clearOAuthScopeHeaderCache } from "../layers/preflight";
 import { clearOrgListMemoryCache } from "../orgs/fetchOrgs";
+import { clearOrgListAnalysisCache } from "../orgs/orgListAnalysisCache";
 import { clearSession, loadToken } from "./tokenStore";
 import {
   fetchGitHubUser,
@@ -46,6 +48,8 @@ export async function refreshSession(): Promise<void> {
 export function signOut(options?: SignOutOptions): void {
   clearSession();
   clearOrgListMemoryCache();
+  clearOrgListAnalysisCache();
+  clearOAuthScopeHeaderCache();
   githubUser.set(null);
   reauthenticateSuggested.set(Boolean(options?.suggestReauth));
 }
