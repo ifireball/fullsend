@@ -12,14 +12,20 @@ import {
   FetchOrgsError,
 } from "./fetchOrgs";
 
-function mockOctokit(iterator: () => AsyncIterableIterator<unknown>) {
+function mockOctokit(
+  iterator: () => AsyncIterableIterator<unknown>,
+  membershipRows: unknown[] = [],
+) {
   vi.mocked(createUserOctokit).mockReturnValue({
-    paginate: {
+    paginate: Object.assign(vi.fn(async () => membershipRows), {
       iterator: vi.fn(iterator),
-    },
+    }),
     rest: {
       repos: {
         listForAuthenticatedUser: {},
+      },
+      orgs: {
+        listMembershipsForAuthenticatedUser: {},
       },
     },
   } as never);
@@ -48,7 +54,60 @@ describe("fetchOrgs", () => {
 
     const r = await fetchOrgs("token", { force: true });
     expect(r.orgs.map((o) => o.login)).toEqual(["alpha", "zebra"]);
+    expect(r.orgs.every((o) => o.hasWritePathInOrg === true)).toBe(true);
+    expect(r.orgs.every((o) => o.membershipCanCreateRepository === null)).toBe(true);
     expect(r.emptyHint).toBeNull();
+  });
+
+  it("marks org read-only when every listed repo is pull-only", async () => {
+    mockOctokit(() =>
+      (async function* () {
+        yield {
+          status: 200,
+          headers: new Headers(),
+          data: [
+            {
+              owner: { type: "Organization", login: "Acme" },
+              permissions: { admin: false, maintain: false, push: false, pull: true },
+            },
+            {
+              owner: { type: "Organization", login: "Acme" },
+              permissions: { admin: false, maintain: false, push: false, pull: true },
+            },
+          ],
+        };
+      })(),
+    );
+
+    const r = await fetchOrgs("token", { force: true });
+    expect(r.orgs).toEqual([
+      { login: "Acme", hasWritePathInOrg: false, membershipCanCreateRepository: null },
+    ]);
+  });
+
+  it("merges membership can_create_repository from GET /user/memberships/orgs", async () => {
+    mockOctokit(
+      () =>
+        (async function* () {
+          yield {
+            status: 200,
+            headers: new Headers(),
+            data: [{ owner: { type: "Organization", login: "Acme" } }],
+          };
+        })(),
+      [
+        {
+          organization: { login: "Acme" },
+          role: "member",
+          permissions: { can_create_repository: false },
+        },
+      ],
+    );
+
+    const r = await fetchOrgs("token", { force: true });
+    expect(r.orgs).toEqual([
+      { login: "Acme", hasWritePathInOrg: true, membershipCanCreateRepository: false },
+    ]);
   });
 
   it("returns empty orgs with emptyHint when no organisation-owned repos", async () => {
