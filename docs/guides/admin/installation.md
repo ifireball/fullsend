@@ -55,7 +55,7 @@ gcloud iam workload-identity-pools providers create-oidc github \
   --location=global \
   --workload-identity-pool=github-actions \
   --issuer-uri="https://token.actions.githubusercontent.com" \
-  --attribute-mapping="google.subject=assertion.sub,attribute.repository_owner=assertion.repository_owner" \
+  --attribute-mapping="google.subject=assertion.sub,attribute.repository_owner=assertion.repository_owner,attribute.repository=assertion.repository" \
   --attribute-condition="assertion.repository_owner == '$ORG_NAME'" \
   --project="$GCP_PROJECT"
 ```
@@ -67,8 +67,14 @@ The `attribute-condition` restricts which GitHub Actions workflows can exchange 
 
 For repo-scoped access, replace the `attribute-condition` above with:
 
-```
+```bash
 --attribute-condition="assertion.repository == '$ORG_NAME/.fullsend'"
+```
+
+If you choose repo-scoped access, also update the `--member` in step 1c to match:
+
+```bash
+--member="principalSet://iam.googleapis.com/projects/$PROJECT_NUMBER/locations/global/workloadIdentityPools/github-actions/attribute.repository/$ORG_NAME/.fullsend"
 ```
 
 **1c. Grant the service account impersonation permission**
