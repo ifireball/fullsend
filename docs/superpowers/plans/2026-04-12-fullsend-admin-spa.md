@@ -14,13 +14,15 @@
 
 **UI stack:** **Svelte** is **locked in** (Svelte 5 + Vite); recorded in the spec Open items.
 
-**Spec:** [2026-04-06-fullsend-admin-spa-design.md](../specs/2026-04-06-fullsend-admin-spa-design.md) (architecture, auth, wizards)
+**Spec:** [2026-04-06-fullsend-admin-spa-design.md](../specs/2026-04-06-fullsend-admin-spa-design.md) (architecture, auth, staging, GitHub interrupts, CLI parity guidance)
 
 **UX spec (screens, copy, states, errors):** [2026-04-21-fullsend-admin-spa-ux-design.md](../specs/2026-04-21-fullsend-admin-spa-ux-design.md) — use wherever tasks touch login, nav chrome, org list, org dashboard, or row/global error presentation. **Not** a commitment to implement every UX row in one PR; tasks below cite the sections that matter.
 
+**Org install / repair interior (flat screen):** [2026-04-26-admin-spa-org-setup-install-repair-screen-design.md](../specs/2026-04-26-admin-spa-org-setup-install-repair-screen-design.md) — **canonical** for **Tasks 13–14**: interaction-first **groups**, one **primary** per group, prerequisite line **under group title**, read-only **loading** vs **in-flight apply** (spinner rollup, **Abort**), **no** extra Confirm modal for the automation bundle, **GitHub-pending** vs API spinner rules.
+
 **Related CI/site spec:** [2026-04-09-site-cloudflare-pages-design.md](../specs/2026-04-09-site-cloudflare-pages-design.md)
 
-**Task order:** **Tasks 1–14** follow the main build-out (scaffold through mutating wizard). **Task 15** (preview OAuth handoff) sits **after Task 14** and **before Task 16** (local dev doc) so it can be redesigned: **Turnstile on token exchange** (Worker hardening) may be **awkward or incompatible** with how we want **per-PR preview** review sites to behave—capture an explicit workaround before implementing the flow described below. **Task 16** is documentation only.
+**Task order:** **Tasks 1–12** cover scaffold through read-only org dashboard. **Tasks 13–14** implement the **single flat org setup** route (install + repair interior per [2026-04-26 spec](../specs/2026-04-26-admin-spa-org-setup-install-repair-screen-design.md)), not a linear wizard. **Task 15** (preview OAuth handoff) sits **after Task 14** and **before Task 16** (local dev doc) so it can be redesigned: **Turnstile on token exchange** (Worker hardening) may be **awkward or incompatible** with how we want **per-PR preview** review sites to behave—capture an explicit workaround before implementing the flow described below. **Task 16** is documentation only.
 
 **Tasks 1–9 snapshot (2026-04-23):** **Tasks 1–6** and **Task 7 OAuth plumbing** (PKCE, SPA entry callback, same-origin exchange, session refresh) are **done** in repo. **Task 4b** [Step 6](#task-4b-ship-task-2b-oauth-worker-with-site-worker--static-assets) (GitHub App callback URL registration for every preview host) stays an **ongoing maintainer checklist**. **Task 7** is **not** yet **UX-spec-complete** per [2026-04-21 UX spec](../specs/2026-04-21-fullsend-admin-spa-ux-design.md) — see the **2026-04-23** table under [Task 7](#task-7-production-sign-in-authorize-url--spa-document-callback). **Task 6** vs that spec: today `fullsend:github-unauthorized` triggers **sign-out**, not a **Re-authenticate** [global banner](../specs/2026-04-21-fullsend-admin-spa-ux-design.md#global-banners-screen-level-below-the-nav-bar). **Task 9** is **done** for **fetch + filter + `#/orgs` + in-memory cache** (`web/admin/src/lib/orgs/*`, `OrgList.svelte`), including **smaller repo-list pages**, **progressive org paint**, **15-row cap**, and **in-list loading spinner**; it remains **not** **UX-spec-complete** for **live** row states (**Configure** / **Deploy** / **Cannot deploy** / per-row errors) until **Task 10+** — see the **2026-04-23** table under [Task 9](#task-9-org-list-alphabetical-search--in-memory-session-cache).
 
@@ -46,7 +48,9 @@
 | `web/admin/src/lib/auth/previewHandoff.ts` | `return_to` allowlist, `state`/`sessionStorage`, fragment parse |
 | `web/admin/src/lib/status/types.ts` | TS mirrors of `LayerStatus` / `LayerReport` from `internal/layers/layers.go` |
 | `web/admin/src/lib/status/engine.ts` | Read-only analyze-style rollup (grows over phases) |
-| `web/admin/src/routes/*` | Svelte views (hash routes): org list, org dashboard, repo list — layout and state tables: [UX spec](../specs/2026-04-21-fullsend-admin-spa-ux-design.md) |
+| `web/admin/src/routes/*` | Svelte views (hash routes): org list, org dashboard, **org setup** (`#/org/:login/setup`) — layout and state tables: [UX spec](../specs/2026-04-21-fullsend-admin-spa-ux-design.md); org setup **interior**: [2026-04-26 org setup spec](../specs/2026-04-26-admin-spa-org-setup-install-repair-screen-design.md) |
+| `web/admin/src/lib/orgSetup/*` | **Tasks 13–14:** group model, prerequisite DAG → visible “Complete … first” strings, map `analyzeOrgLayers` output + config to **interaction-first** groups (per-app GitHub vs one **automation** bundle) |
+| `web/admin/src/lib/actions/*` | **Task 14:** mutating GitHub API orchestration for automation bundle and any SPA-only steps; pair with Vitest `fetch` mocks |
 | `web/admin/src/lib/auth/oauth.test.ts` | Vitest: callback parsing, storage |
 | `web/admin/src/lib/auth/previewHandoff.test.ts` | Vitest: allowlist accepts production admin origin only |
 | `.github/workflows/site-build.yml` | Setup Node, `npm ci` + `npm run build`, copy `web/admin/dist` → `_bundle/public/admin/`, mindmap from `web/public/`, worker from `cloudflare_site/worker/` |
@@ -1080,7 +1084,7 @@ git commit -m "feat(admin): TS analyze for workflows layer"
 
 - [x] **Step 1: Vitest for pure union/classification** with fixture YAML strings in test file. Fixtures should cover **R6** / **R7** style cases from [Repo row states](../specs/2026-04-21-fullsend-admin-spa-ux-design.md#repo-row-states-complete-set) (not-in-config vs orphan).
 
-- [x] **Step 2: Implement UI routes `#/org/:login`** (org dashboard). **Nav bar:** [Account bar](../specs/2026-04-21-fullsend-admin-spa-ux-design.md#screen-account--navigation-bar) shows user + org avatar/name for this screen. **Pane A:** status states and **Repair** / **Upgrade** as in UX spec (wire to routes or disabled stubs until Task 14). **Pane B:** search-as-you-type + **Refresh**; each row implements the **R0–R7** trailing clusters where read-only data allows (e.g. **Onboard** / **Onboarding — check PR #nnn** / **Off-boarding — check PR #nnn** / **Onboarded** + red **Remove** / partial + **Repair** + **Remove** / **Not in Fullsend config** + **Onboard** / orphan + **Repository missing** + **i** + **Remove from config**). Use [GitHub terminology](../specs/2026-04-21-fullsend-admin-spa-ux-design.md#github-terminology) for GitHub-sourced labels. **Errors:** [Per-row error pattern](../specs/2026-04-21-fullsend-admin-spa-ux-design.md#per-row-error-pattern-org-list-and-repo-list) (red triangle + **`Error`** + popover + **`Retry`**); pane-wide failures → [global banner](../specs/2026-04-21-fullsend-admin-spa-ux-design.md#global-banners-screen-level-below-the-nav-bar). **Interaction:** [List interaction model](../specs/2026-04-21-fullsend-admin-spa-ux-design.md#list-interaction-model) — primary actions on **buttons**; PR `#nnn` is a **link**. Read-only task: **Remove** / **Repair** / **Onboard** may be disabled or navigate to placeholders until Task 14 implements mutations.
+- [x] **Step 2: Implement UI routes `#/org/:login`** (org dashboard). **Nav bar:** [Account bar](../specs/2026-04-21-fullsend-admin-spa-ux-design.md#screen-account--navigation-bar) shows user + org avatar/name for this screen. **Pane A:** status states and **Repair** / **Upgrade** as in UX spec (wire to routes or disabled stubs until **Tasks 13–14**). **Pane B:** search-as-you-type + **Refresh**; each row implements the **R0–R7** trailing clusters where read-only data allows (e.g. **Onboard** / **Onboarding — check PR #nnn** / **Off-boarding — check PR #nnn** / **Onboarded** + red **Remove** / partial + **Repair** + **Remove** / **Not in Fullsend config** + **Onboard** / orphan + **Repository missing** + **i** + **Remove from config**). Use [GitHub terminology](../specs/2026-04-21-fullsend-admin-spa-ux-design.md#github-terminology) for GitHub-sourced labels. **Errors:** [Per-row error pattern](../specs/2026-04-21-fullsend-admin-spa-ux-design.md#per-row-error-pattern-org-list-and-repo-list) (red triangle + **`Error`** + popover + **`Retry`**); pane-wide failures → [global banner](../specs/2026-04-21-fullsend-admin-spa-ux-design.md#global-banners-screen-level-below-the-nav-bar). **Interaction:** [List interaction model](../specs/2026-04-21-fullsend-admin-spa-ux-design.md#list-interaction-model) — primary actions on **buttons**; PR `#nnn` is a **link**. Read-only task: **Remove** / **Repair** / **Onboard** may be disabled or navigate to placeholders until **Tasks 13–14** implement the org setup route and mutations.
 
 - [x] **Step 3: Commit**
 
@@ -1091,45 +1095,131 @@ git commit -m "feat(admin): org detail with repo/config union"
 
 ---
 
-### Task 13: Wizard shell (linear steps, review screen, no mutations yet)
+### Task 13: Org setup route — flat group board, dependency hints, read-only analyze (no mutations)
 
-**UX spec boundary:** Wizard **interiors** (steps, fields) follow the **architecture** spec [Section 4](../specs/2026-04-06-fullsend-admin-spa-design.md#section-4--wizards-onboard-repair-uninstall-agent-apps-secrets). **Entry chrome** from lists (**Deploy Fullsend**, **Configure**, **Repair**, **Upgrade**, **Onboard**) must stay consistent with [Organisation selection](../specs/2026-04-21-fullsend-admin-spa-ux-design.md#screen-organisation-selection) and [Organisation dashboard](../specs/2026-04-21-fullsend-admin-spa-ux-design.md#screen-organisation-dashboard) in the UX spec (labels, colors, button vs row-click rules).
+**Goal:** Ship the **single-screen** org **install + repair** shell at `#/org/:login/setup` per [2026-04-26 org setup spec](../specs/2026-04-26-admin-spa-org-setup-install-repair-screen-design.md): **interaction-first** groups (typically **one card per agent GitHub App** that needs a github.com flow + **one automation group** for API-only bundle), **one primary button slot** per group (disabled with short label until actionable), **prerequisite** copy **under the group title** when blocked, **rollup** idle icons + headlines fed from existing `analyzeOrgLayers` / `LayerReport` data. Implement **read-only loading** state (spinner in rollup, grey unknown item lines, primary disabled, **no** Abort) per spec **Loading and in-flight states → Read-only loading**. **No** mutating `Install` yet (Task 14).
+
+**UX / architecture cross-links:** [Organisation selection](../specs/2026-04-21-fullsend-admin-spa-ux-design.md#screen-organisation-selection) / [Organisation dashboard](../specs/2026-04-21-fullsend-admin-spa-ux-design.md#screen-organisation-dashboard) entry buttons route here; [Section 4](../specs/2026-04-06-fullsend-admin-spa-design.md#section-4--wizards-onboard-repair-uninstall-agent-apps-secrets) remains the source for **staging** / **GitHub interrupt** expectations when Task 14 wires real flows.
 
 **Files:**
 
-- Create: `admin/src/lib/wizard/machine.ts` — step index, `back`/`next`, `review` payload
-- Create: `admin/src/routes/OnboardWizard.svelte`
+- Create: `web/admin/src/lib/orgSetup/types.ts` — `SetupGroupId`, `SetupGroupKind` (`github_app` | `automation` | `manual_info`), `SetupGroupViewModel` (title, rollup idle state, item rows, `prerequisiteHint: string | null`, `primary: { label: string; disabled: boolean }`)
+- Create: `web/admin/src/lib/orgSetup/groupOrder.ts` — pure functions: dependency edges (derived from layer semantics, **not** CLI step index), `prerequisiteHint(groupId, completedIds, edges)`, topological sort for **display order**
+- Create: `web/admin/src/lib/orgSetup/groupOrder.test.ts` — Vitest for hints and ordering on small synthetic graphs
+- Create: `web/admin/src/lib/orgSetup/mapAnalyzeToGroups.ts` — maps `LayerReport[]` + org `agents[]` from config parse → `SetupGroupViewModel[]`
+- Create: `web/admin/src/lib/orgSetup/mapAnalyzeToGroups.test.ts` — Vitest: fixture `LayerReport[]` + agents → expected number of app vs automation groups and disabled flags
+- Create: `web/admin/src/routes/OrgSetup.svelte` — flat vertical list of group cards matching spec order (title → optional prerequisite → rollup → items → primary)
+- Modify: `web/admin/src/App.svelte` — register `#/org/:org/setup` → `OrgSetup`; keep `#/install/:org` as **alias** that immediately `replaceState` to `#/org/:org/setup` (or remove stub route after updating all `href`s)
+- Modify: `web/admin/src/routes/OrgList.svelte` — **Deploy Fullsend** `href` → `#/org/:login/setup` (was `#/install/…`)
+- Modify: `web/admin/src/routes/OrgDetail.svelte` — **Repair** / **Upgrade** (when shown) → `#/org/:login/setup` (replace disabled stub / `#/install/…` if still present)
+- Delete or shrink: `web/admin/src/routes/InstallEntryStub.svelte` once **Deploy** no longer references it
 
-- [ ] **Step 1: Vitest for wizard transitions**.
+- [ ] **Step 1: Write failing test `web/admin/src/lib/orgSetup/groupOrder.test.ts`**
 
-- [ ] **Step 2: Implement empty steps with titles matching CLI order** from spec Section 4 (`config` → apps → secrets → workflows → enrollment).
+```typescript
+import { describe, it, expect } from "vitest";
+import { prerequisiteHint, type DepEdge } from "./groupOrder";
 
-- [ ] **Step 3: Commit**
+describe("prerequisiteHint", () => {
+  const edges: DepEdge[] = [
+    { group: "automation", requiresSatisfied: "apps_ready" },
+    { group: "apps_ready", requiresSatisfied: "config_ok" },
+  ];
+
+  it("returns null when all predecessors satisfied", () => {
+    expect(
+      prerequisiteHint("automation", new Set(["config_ok", "apps_ready"]), edges),
+    ).toBeNull();
+  });
+
+  it("returns first missing predecessor title for automation", () => {
+    expect(
+      prerequisiteHint("automation", new Set(["config_ok"]), edges),
+    ).toMatch(/apps/i);
+  });
+});
+```
+
+- [ ] **Step 2: Run Vitest (expect FAIL: module missing)**
 
 ```bash
-git add admin/src/lib/wizard admin/src/routes/OnboardWizard.svelte
-git commit -m "feat(admin): onboarding wizard shell"
+npm run test -- web/admin/src/lib/orgSetup/groupOrder.test.ts
+```
+
+Expected: FAIL (`Cannot find module` or missing export).
+
+- [ ] **Step 3: Implement `web/admin/src/lib/orgSetup/groupOrder.ts`**
+
+Export `DepEdge` as `{ group: string; requiresSatisfied: string }` (meaning: `group` is blocked until the named predecessor is satisfied), `prerequisiteHint(groupId, satisfied: Set<string>, edges: DepEdge[]): string | null`, and `sortGroupsForDisplay(ids: string[], edges: DepEdge[]): string[]` (topological sort; cycle throws in dev/test). Map internal ids to **user-visible** group titles in the hint string (spec: “Complete **{prior group title}** first.”).
+
+- [ ] **Step 4: Run `groupOrder` tests**
+
+```bash
+npm run test -- web/admin/src/lib/orgSetup/groupOrder.test.ts
+```
+
+Expected: PASS.
+
+- [ ] **Step 5: Write failing test `web/admin/src/lib/orgSetup/mapAnalyzeToGroups.test.ts`**
+
+Fixture: two `LayerReport` objects (names `config` + `workflows`) both `installed`, two agents `{ role: "coder" }, { role: "reviewer" }` → expect **two** `github_app` groups (titles contain roles) and **one** `automation` group whose items reference `wouldFix` / `details` text from reports. (Adjust names to match real `analyzeOrgLayers` output keys from `web/admin/src/lib/layers/analyzeOrg.ts`.)
+
+- [ ] **Step 6: Implement `types.ts` + `mapAnalyzeToGroups.ts`** until the test passes.
+
+- [ ] **Step 7: Implement `OrgSetup.svelte`** — on mount, read `:org` from router props, run `analyzeOrgLayers` (reuse `OrgDetail` patterns for token + Octokit), bind cards to `mapAnalyzeToGroups`. **Loading:** while `analyzeOrgLayers` promise pending, each group card shows rollup **spinner** + **Checking…** (or one global banner + cards skeleton—prefer **per-group** spec). **Items:** unknown lines greyed until reports return.
+
+- [ ] **Step 8: Wire routes and entry links** (see **Files** above); remove dead **Install** stub if unused.
+
+- [ ] **Step 9: Manual smoke** — `#/org/acme/setup` loads, **Deploy** from org list lands on same route, **Repair** from dashboard lands on same route, prerequisite line appears under title when automation is gated.
+
+- [ ] **Step 10: Commit**
+
+```bash
+git add web/admin/src/lib/orgSetup web/admin/src/routes/OrgSetup.svelte web/admin/src/App.svelte web/admin/src/routes/OrgList.svelte web/admin/src/routes/OrgDetail.svelte
+git commit -m "feat(admin): org setup flat screen shell and analyze wiring"
 ```
 
 ---
 
-### Task 14: Mutating operations (install / repair / uninstall) — per wizard step PRs
+### Task 14: Org setup — mutating automation bundle, app GitHub flows, in-flight + Abort
 
-Each wizard step gets **idempotent** GitHub API calls mirrored from `internal/cli/admin.go` call chains; **before** each mutation batch, show **review** screen listing planned file/secret changes.
+**Goal:** Implement **primary** actions: **automation group** runs **idempotent** GitHub API work (mirror `internal/cli/admin.go` + `internal/layers/*` `Install` ordering **inside the bundle only**—user-visible order stays interaction-first per Task 13). **No** modal **Confirm** before automation run: on-screen `wouldFix` / item list is the review per [2026-04-26 spec § Relation to companion “final review”](../specs/2026-04-26-admin-spa-org-setup-install-repair-screen-design.md#relation-to-companion-final-review). **In-flight apply** per spec: rollup **spinner** + phase headline, items **queued / in progress / done / failed**, sole primary = **Abort** until finished; after abort or completion, return to idle with accurate per-item rows + **Retry** on same button slot if failures. **GitHub-pending** app groups: instructional rollup + **Continue** / **Open GitHub** (not API spinner) unless polling.
 
-**UX spec:** Use [global banners](../specs/2026-04-21-fullsend-admin-spa-ux-design.md#global-banners-screen-level-below-the-nav-bar) for session, rate-limit, and Worker-wide failures during wizards. After mutations affect repo/org row state, refresh row data so **Pane B** states (**R2**/**R3** PR links, **R4**/**R5** + **Remove**, etc.) stay aligned with [Repo row states](../specs/2026-04-21-fullsend-admin-spa-ux-design.md#repo-row-states-complete-set). Destructive actions (**Remove**, config cleanup) warrant confirmations at least as strong as the architecture spec’s wizard **review** pattern (UX spec does not redefine wizard confirmations).
+**UX spec:** [Global banners](../specs/2026-04-21-fullsend-admin-spa-ux-design.md#global-banners-screen-level-below-the-nav-bar) for 401 / rate limit / Worker errors during apply. Refresh **OrgDetail** / setup state after successful mutations so [Repo row states](../specs/2026-04-21-fullsend-admin-spa-ux-design.md#repo-row-states-complete-set) stay coherent.
 
-**Files:** grow under `admin/src/lib/actions/*`; each action module pairs with Vitest **HTTP mock** (e.g. `fetch` mock) where feasible.
+**Files:**
 
-- [ ] **Step 1: Implement **config repo** create/push path in TS** (mirror Go), with tests.
+- Create: `web/admin/src/lib/actions/automationApply.ts` — async function `runAutomationApply(input: { org: string; gh: LayerGithub; signal: AbortSignal })` (`LayerGithub` from `web/admin/src/lib/layers/githubClient.ts`) orchestrating sub-steps (config files, workflows, secrets, enrollment, dispatch—exact sequence from Go `Stack`); each sub-step updates a **progress callback** for UI
+- Create: `web/admin/src/lib/actions/automationApply.test.ts` — Vitest with **global `fetch` mocked** or Octokit request hook where feasible; assert **AbortSignal** abort stops issuing further sub-step calls after a boundary
+- Modify: `web/admin/src/routes/OrgSetup.svelte` — wire automation primary: idle → on click start `runAutomationApply` with `AbortController`, drive **in-flight** UI; wire **Abort** to `controller.abort()`
+- Create (as needed): `web/admin/src/lib/actions/appGithubFlow.ts` — open-window / return detection + `localStorage` staging keys per [architecture Section 4](../specs/2026-04-06-fullsend-admin-spa-design.md#section-4--wizards-onboard-repair-uninstall-agent-apps-secrets); Vitest for storage key shape + clear on sign-out hook (dispatch from existing `clearSession` path)
+- Modify: `web/admin/src/lib/auth/tokenStore.ts` or `App.svelte` sign-out — ensure staging keys documented in spec are **cleared on sign-out**
 
-- [ ] **Step 2: Commit**
+- [ ] **Step 1: Write failing test `automationApply.test.ts`** — mock `fetch` counting calls; `runAutomationApply` with `AbortSignal` aborted after first “successful” sub-call; expect **no** third HTTP call (tune to match real step count ≥ 2).
+
+- [ ] **Step 2: Implement minimal `automationApply.ts`** — first sub-step only (e.g. workflows file touch) until test green; expand steps in follow-up commits inside Task 14.
+
+- [ ] **Step 3: Commit**
 
 ```bash
-git commit -m "feat(admin): apply config repo layer from wizard"
+git add web/admin/src/lib/actions/automationApply.ts web/admin/src/lib/actions/automationApply.test.ts
+git commit -m "feat(admin): automation apply orchestration with AbortSignal"
 ```
 
-- [ ] **Step 3–N:** Repeat for workflows, secrets, enrollment, appsetup flows; follow `internal/appsetup/*` for GitHub App creation flows that **open github.com** (SPA documents interrupt/resume via `localStorage` per spec).
+- [ ] **Step 4: Wire `OrgSetup.svelte` in-flight + Abort** — match [Loading and in-flight → In-flight apply](../specs/2026-04-26-admin-spa-org-setup-install-repair-screen-design.md#in-flight-apply-mutating-api-work-for-this-group); dependent groups show **Wait for {title}** under title while automation runs.
+
+- [ ] **Step 5: Implement per–GitHub App group primaries** — `window.open` to documented GitHub URLs, persist staged fields to `localStorage`, **Continue** after return; clear staging on success path.
+
+- [ ] **Step 6: Extend `automationApply.ts` to full stack parity** (config → workflows → secrets → enrollment → dispatch or the order enforced by prerequisites—**code** order may match Go `Stack` even though **UI** order is interaction-first). Each expansion keeps tests green or adds a new table-driven test file under `web/admin/src/lib/actions/fixtures/` with mocked HTTP responses.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add web/admin/src/lib/actions web/admin/src/routes/OrgSetup.svelte
+git commit -m "feat(admin): wire org setup mutations and GitHub app flows"
+```
+
+- [ ] **Step 8: Manual E2E smoke** — happy path partial install, **Abort** mid-automation, reload: UI shows partial item states + **Retry**; sign-out clears `localStorage` staging keys used by app groups.
 
 ---
 
@@ -1191,15 +1281,16 @@ git commit -m "docs: admin SPA local development checklist"
 | Org list + search | 9 |
 | Org/repo union + orphan | 12 |
 | `LayerReport` / analyze semantics | 5, 10–11 |
-| Wizards + review | 13–14 |
+| Org setup install/repair (flat screen, mutations) | 13–14 ([2026-04-26 spec](../specs/2026-04-26-admin-spa-org-setup-install-repair-screen-design.md)) |
 | Self-hosted / local dev | 2b, **16** (`sample.env.local` + `docs/admin-spa-local-dev.md`) |
 | Permission matrix | 1, 2b, 7, 9–11 (incremental) |
 | No automated CLI↔SPA parity CI | Omitted intentionally |
-| **UX** (screens, states, nav, errors) | [2026-04-21 UX spec](../specs/2026-04-21-fullsend-admin-spa-ux-design.md); tasks **6–7**, **9**, **10–16** cite it where relevant |
+| **UX** (screens, states, nav, errors) | [2026-04-21 UX spec](../specs/2026-04-21-fullsend-admin-spa-ux-design.md); tasks **6–7**, **9**, **10–12**, **15–16** cite it where relevant |
+| **Org setup UX** (flat groups, loading, Abort, no modal confirm) | [2026-04-26 org setup spec](../specs/2026-04-26-admin-spa-org-setup-install-repair-screen-design.md); tasks **13–14** |
 
 **2. Placeholder scan**
 
-No TBD/TODO strings. **Complete (2026-04-20 plan refresh):** Tasks **1**, **2**, **2b**, **3**, **4**, **4b** (Step 6 callback URL checklist ongoing), **5**, **6**, **7**. **Task 12 (2026-04-26):** org dashboard + repo/config union (read-only). **Open:** **13–14**, **15** (preview OAuth redesign), **16** (local dev doc), **4b** Step 6.
+No TBD/TODO strings. **Complete (2026-04-20 plan refresh):** Tasks **1**, **2**, **2b**, **3**, **4**, **4b** (Step 6 callback URL checklist ongoing), **5**, **6**, **7**. **Task 12 (2026-04-26):** org dashboard + repo/config union (read-only). **Open:** **13–14** (org setup flat screen per **2026-04-26** spec—replaces former linear wizard tasks), **15** (preview OAuth redesign), **16** (local dev doc), **4b** Step 6.
 
 **3. Type consistency**
 
