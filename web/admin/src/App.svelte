@@ -180,7 +180,11 @@
 {:else if $githubUser}
   <header class="bar account-bar">
     <nav class="account-bar-crumb" aria-label="Breadcrumb">
-      <div class="user-cluster">
+      <a
+        class="user-cluster user-cluster--home"
+        href="#/orgs"
+        aria-label="Organisations — return to organisation list"
+      >
         {#if $githubUser.avatarUrl}
           <img
             class="user-avatar"
@@ -196,7 +200,7 @@
             <span class="user-name">{$githubUser.name}</span>
           {/if}
         </div>
-      </div>
+      </a>
       {#if $navOrgContext}
         <span class="nav-sep" aria-hidden="true">/</span>
         <div class="org-cluster">
@@ -477,6 +481,20 @@
     display: flex;
     align-items: center;
     gap: 0.65rem;
+  }
+  a.user-cluster--home {
+    text-decoration: none;
+    color: inherit;
+    border-radius: 8px;
+    padding: 0.15rem 0.35rem 0.15rem 0.15rem;
+    margin: -0.15rem -0.35rem -0.15rem -0.15rem;
+    outline-offset: 2px;
+  }
+  a.user-cluster--home:hover {
+    background: #f6f8fa;
+  }
+  a.user-cluster--home:focus-visible {
+    outline: 2px solid #0969da;
   }
   .org-cluster {
     display: flex;
