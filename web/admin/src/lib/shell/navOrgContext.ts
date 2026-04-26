@@ -5,6 +5,8 @@ export type NavOrgContext = {
   login: string;
   avatarUrl: string | null;
   displayName: string | null;
+  /** Set on `#/org/:login/setup` after analyze: drives the nav bar cluster after the org. */
+  setupFlow?: "deploy" | "repair";
 };
 
 export const navOrgContext = writable<NavOrgContext | null>(null);

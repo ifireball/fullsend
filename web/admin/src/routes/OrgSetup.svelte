@@ -36,6 +36,8 @@
   let analyzeError = $state<string | null>(null);
   let analyzePending = $state(true);
   let groups = $state<SetupGroupViewModel[]>([]);
+  /** Drives nav bar "Deploy" vs "Repair" cluster after org; null until analyze succeeds. */
+  let setupFlow = $state<"deploy" | "repair" | null>(null);
 
   const placeholderCardCount = $derived(
     parsedConfig
@@ -58,6 +60,7 @@
     analyzeError = null;
     analyzePending = true;
     groups = [];
+    setupFlow = null;
     orgDisplayName = null;
     orgAvatarUrl = null;
     parsedConfig = null;
@@ -66,6 +69,7 @@
     if (!token || !org) {
       pageError = !org ? "Missing organisation." : "Sign in to load this organisation.";
       analyzePending = false;
+      setupFlow = null;
       return;
     }
 
@@ -86,6 +90,7 @@
           e instanceof Error ? e.message : "Failed to load organisation metadata.";
       }
       analyzePending = false;
+      setupFlow = null;
       return;
     }
 
@@ -113,7 +118,7 @@
     try {
       const agents = cfg ? agentsFromConfig(cfg) : [];
       const enabledRepos = cfg ? enabledReposFromConfig(cfg) : [];
-      const { reports } = await analyzeOrgLayers({
+      const { reports, rollup } = await analyzeOrgLayers({
         org,
         gh,
         agents,
@@ -121,11 +126,13 @@
       });
       if (signal.aborted || gen !== loadGen) return;
       groups = mapAnalyzeToGroups(reports, agents);
+      setupFlow = rollup === "not_installed" ? "deploy" : "repair";
     } catch (e) {
       if (signal.aborted || gen !== loadGen) return;
       analyzeError =
         e instanceof Error ? e.message : "Failed to analyze Fullsend deployment status.";
       groups = [];
+      setupFlow = null;
     } finally {
       if (!signal.aborted && gen === loadGen) {
         analyzePending = false;
@@ -139,6 +146,8 @@
       if (!o) {
         pageError = "Missing organisation.";
         analyzePending = false;
+        setupFlow = null;
+        setNavOrgContext(null);
         return;
       }
       if (!u) {
@@ -146,6 +155,8 @@
         pageError = "Sign in to load this organisation.";
         analyzePending = false;
         groups = [];
+        setupFlow = null;
+        setNavOrgContext(null);
         return;
       }
       void loadSetup();
@@ -158,6 +169,7 @@
 
   $effect(() => {
     const o = org;
+    const flow = setupFlow;
     if (!o) {
       setNavOrgContext(null);
       return;
@@ -166,6 +178,7 @@
       login: o,
       avatarUrl: orgAvatarUrl ?? orgGravatarFallback(o),
       displayName: orgDisplayName,
+      ...(flow ? { setupFlow: flow } : {}),
     });
   });
 
@@ -178,14 +191,7 @@
   }
 </script>
 
-<section class="setup" aria-labelledby="setup-title">
-  <h1 id="setup-title">Install / repair</h1>
-  <p class="setup-lede">
-    <a class="back" href="#/org/{encodeURIComponent(org)}">← Organisation dashboard</a>
-    ·
-    <a class="back" href="#/orgs">All organisations</a>
-  </p>
-
+<section class="setup" aria-label="Organisation setup">
   {#if pageError}
     <div class="banner banner--err" role="alert">
       <span class="banner-msg">{pageError}</span>
@@ -275,23 +281,7 @@
 
   .setup {
     max-width: 44rem;
-  }
-  #setup-title {
-    margin: 0 0 0.35rem;
-    font-size: 1.15rem;
-    font-weight: 600;
-  }
-  .setup-lede {
-    margin: 0 0 1.25rem;
-    font-size: 0.9rem;
-    line-height: 1.5;
-  }
-  .back {
-    color: #0969da;
-    text-decoration: none;
-  }
-  .back:hover {
-    text-decoration: underline;
+    padding-top: 0.25rem;
   }
 
   .setup-board {

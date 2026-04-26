@@ -205,7 +205,11 @@
       </a>
       {#if $navOrgContext}
         <span class="nav-sep" aria-hidden="true">/</span>
-        <div class="org-cluster">
+        <a
+          class="org-cluster org-cluster--link"
+          href="#/org/{encodeURIComponent($navOrgContext.login)}"
+          aria-label="Organisation {$navOrgContext.login} — open dashboard"
+        >
           {#if $navOrgContext.avatarUrl}
             <img
               class="org-avatar"
@@ -221,7 +225,17 @@
               <span class="org-display-name">{$navOrgContext.displayName}</span>
             {/if}
           </div>
-        </div>
+        </a>
+        {#if $navOrgContext.setupFlow}
+          <span class="nav-sep" aria-hidden="true">/</span>
+          <div class="setup-flow-cluster" aria-current="page">
+            <span class="setup-flow-label">
+              {$navOrgContext.setupFlow === "deploy"
+                ? "Deploy Fullsend"
+                : "Repair Fullsend"}
+            </span>
+          </div>
+        {/if}
       {/if}
     </nav>
     <span class="spacer"></span>
@@ -503,6 +517,31 @@
     align-items: center;
     gap: 0.65rem;
     min-width: 0;
+  }
+  a.org-cluster--link {
+    text-decoration: none;
+    color: inherit;
+    border-radius: 8px;
+    padding: 0.15rem 0.35rem 0.15rem 0.15rem;
+    margin: -0.15rem -0.35rem -0.15rem -0.15rem;
+    outline-offset: 2px;
+  }
+  a.org-cluster--link:hover {
+    background: #f6f8fa;
+  }
+  a.org-cluster--link:focus-visible {
+    outline: 2px solid #0969da;
+  }
+  .setup-flow-cluster {
+    display: flex;
+    align-items: center;
+    min-width: 0;
+  }
+  .setup-flow-label {
+    font-weight: 700;
+    font-size: 0.95rem;
+    color: #24292f;
+    white-space: nowrap;
   }
   .org-avatar {
     border-radius: 6px;
