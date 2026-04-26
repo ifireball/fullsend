@@ -51,4 +51,19 @@ repos:
     expect(agentsFromConfig(cfg)).toEqual([{ role: "triage" }]);
     expect(enabledReposFromConfig(cfg)).toEqual(["alpha", "beta"]);
   });
+
+  it("uses defaults.roles when agents list is empty", () => {
+    const cfg = parseOrgConfigYaml(`version: "1"
+dispatch:
+  platform: github-actions
+defaults:
+  roles: [fullsend, coder]
+repos: {}
+`);
+    expect(validateOrgConfig(cfg)).toBeNull();
+    expect(agentsFromConfig(cfg)).toEqual([
+      { role: "fullsend" },
+      { role: "coder" },
+    ]);
+  });
 });

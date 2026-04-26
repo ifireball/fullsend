@@ -43,9 +43,20 @@ export function validateOrgConfig(cfg: OrgConfigYaml): string | null {
   return null;
 }
 
-/** Agent rows for secrets-layer analyze (mirrors `config.OrgConfig.Agents`). */
+/**
+ * Agent roles for secrets-layer analyze and org setup grouping.
+ * Prefers explicit `agents` rows; when that list is empty, uses `defaults.roles`
+ * so configs that only declare repo defaults still get per-role GitHub App cards.
+ */
 export function agentsFromConfig(cfg: OrgConfigYaml): { role: string }[] {
-  return (cfg.agents ?? []).map((a) => ({ role: a.role }));
+  const fromAgents = (cfg.agents ?? [])
+    .filter((a) => typeof a.role === "string" && a.role.length > 0)
+    .map((a) => ({ role: a.role }));
+  if (fromAgents.length > 0) {
+    return fromAgents;
+  }
+  const roles = cfg.defaults?.roles ?? [];
+  return roles.map((role) => ({ role }));
 }
 
 /** Enabled repo names for enrollment-layer analyze (sorted). */
