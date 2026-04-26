@@ -18,7 +18,7 @@ This document **does not** prescribe exact API contracts or Worker behavior; it 
   - Each surface that **requires the user to complete work on github.com** (for example **one group per agent GitHub App** that is created or re-linked via GitHub’s UI) is its **own** group.
   - Operations the SPA can perform **without** that mandatory GitHub form hop are **one shared “automation” group** (config repo content, workflows, secrets via GitHub APIs, enrollment/dispatch fixes—exact membership follows implementation and parity with the Go layer stack).
 - **One primary action per group** (Install / Repair / Continue / Open GitHub—wording per group state). Sub-items show **status**; they do **not** each get a competing primary **Apply**.
-- **Dependency gating:** if a group cannot run until others are satisfied, the group is **visually inactive** and its primary control is **disabled**. **Prerequisite copy is always visible** (for example a muted line under the disabled button: “Complete **{prior group title}** first”). **No separate hover-only** requirement for that message when this visible hint is present (keyboard and screen-reader users read the same text).
+- **Dependency gating:** if a group cannot run until others are satisfied, the group is **visually inactive** and its primary control is **disabled**. **Prerequisite copy is always visible** as a **muted line directly under the group title** (not on the button—button labels stay short). Example: “Complete **{prior group title}** first.” **No separate hover-only** requirement for that message when this visible hint is present (keyboard and screen-reader users read the same text).
 - **No extra confirmation step** for the automation group’s primary action beyond what is already shown in the group (**detail lines, status indicators, and `wouldFix`-style summaries**). Users act from **informed consent on-screen**, not a modal **Confirm**.
 
 ## Non-goals
@@ -48,7 +48,7 @@ Dynamic cardinality: **N agent roles ⇒ N app groups** (or the minimal set of d
 
 ## Per-group layout (flat board)
 
-Each group is a **card** or **band**: **title**, **rollup status** (icon + short headline, consistent with org dashboard language: deployed / degraded / not installed / unknown), **summary**, optional **item list** (one line per sub-check; **links** to GitHub where helpful).
+Each group is a **card** or **band**, top to bottom: **title**; when the group is **blocked by prerequisites**, a **muted prerequisite line** immediately under the title (see [Disabled and prerequisite messaging](#disabled-and-prerequisite-messaging)); **rollup status** (icon + short headline, consistent with org dashboard language: deployed / degraded / not installed / unknown); **summary**; optional **item list** (one line per sub-check; **links** to GitHub where helpful); trailing **primary button** (short label only).
 
 - **Exactly one** primary **button** per group (accessibility: real `button` or equivalent; visible focus ring per UX spec).
 - **Secondary** text links (documentation, “open in GitHub”, PR links) are allowed and do not count as second primaries.
@@ -58,8 +58,10 @@ Each group is a **card** or **band**: **title**, **rollup status** (icon + short
 When a group is blocked:
 
 - Reduce emphasis (opacity / disabled controls) per design system.
-- **Primary button:** `disabled` with **always-visible** prerequisite text (same content for mouse, keyboard, and assistive tech), e.g. “Complete **{named prior group}** before this step.”
+- **Prerequisite copy:** **always-visible** muted line **under the group title** (above status rollup and item list), same text for mouse, keyboard, and assistive tech—e.g. “Complete **{named prior group}** before this step.” This keeps long explanations out of the **button** chrome.
+- **Primary button:** `disabled` with a **short** action label only (for example **Continue** / **Repair** / **Install**); the button does **not** carry the prerequisite sentence.
 - **Do not** rely on **hover-only** tooltips for the **only** explanation of why the group is blocked when visible copy is shown.
+- **Accessibility:** implementations **should** expose the title-adjacent prerequisite line to assistive tech as the description for the disabled primary (for example `aria-describedby` from the button to the hint element).
 
 ## Status and partial outcomes
 
@@ -84,7 +86,7 @@ The companion spec calls for **final review before mutating** bulk installation.
 
 - Install and repair both use **the same route** and **the same group set**; entry path may only affect **focus** and **initial analysis**.
 - Each **GitHub-mandatory** interaction class has **its own group**; **API-only** work lives in **one** automation group.
-- **One** primary button per group; disabled groups show **visible** prerequisite text, not hover-only.
+- **One** primary button per group; disabled groups show **visible** prerequisite text **under the group title**, not on the button and not hover-only.
 - Automation group runs **without** an extra **Confirm** modal; informed intent comes from **on-screen** lists and status.
 - Partial automation failure is visible **inside** the automation group with a clear **retry** path.
 
