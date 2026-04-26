@@ -21,6 +21,7 @@
     SIGNING_IN_CANCELLED_MESSAGE,
     startGithubSignIn,
   } from "./lib/auth/oauth";
+  import { navOrgContext } from "./lib/shell/navOrgContext";
 
   const routes = {
     "/": OrgList,
@@ -178,23 +179,45 @@
   </div>
 {:else if $githubUser}
   <header class="bar account-bar">
-    <div class="user-cluster">
-      {#if $githubUser.avatarUrl}
-        <img
-          class="user-avatar"
-          src={$githubUser.avatarUrl}
-          alt=""
-          width="32"
-          height="32"
-        />
-      {/if}
-      <div class="user-text">
-        <span class="user-login">{$githubUser.login}</span>
-        {#if $githubUser.name}
-          <span class="user-name">{$githubUser.name}</span>
+    <nav class="account-bar-crumb" aria-label="Breadcrumb">
+      <div class="user-cluster">
+        {#if $githubUser.avatarUrl}
+          <img
+            class="user-avatar"
+            src={$githubUser.avatarUrl}
+            alt=""
+            width="32"
+            height="32"
+          />
         {/if}
+        <div class="user-text">
+          <span class="user-login">{$githubUser.login}</span>
+          {#if $githubUser.name}
+            <span class="user-name">{$githubUser.name}</span>
+          {/if}
+        </div>
       </div>
-    </div>
+      {#if $navOrgContext}
+        <span class="nav-sep" aria-hidden="true">/</span>
+        <div class="org-cluster">
+          {#if $navOrgContext.avatarUrl}
+            <img
+              class="org-avatar"
+              src={$navOrgContext.avatarUrl}
+              alt=""
+              width="32"
+              height="32"
+            />
+          {/if}
+          <div class="org-text">
+            <span class="org-login">{$navOrgContext.login}</span>
+            {#if $navOrgContext.displayName && $navOrgContext.displayName !== $navOrgContext.login}
+              <span class="org-display-name">{$navOrgContext.displayName}</span>
+            {/if}
+          </div>
+        </div>
+      {/if}
+    </nav>
     <span class="spacer"></span>
     <button type="button" class="btn" onclick={() => signOut()}>Sign out</button>
   </header>
@@ -432,6 +455,20 @@
     border-bottom: 1px solid #d0d7de;
     background: #fff;
   }
+  .account-bar-crumb {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0 1rem;
+    min-width: 0;
+  }
+  .nav-sep {
+    color: #57606a;
+    font-size: 1.1rem;
+    font-weight: 300;
+    user-select: none;
+    padding: 0 0.15rem;
+  }
   .spacer {
     flex: 1;
     min-width: 0.5rem;
@@ -440,6 +477,35 @@
     display: flex;
     align-items: center;
     gap: 0.65rem;
+  }
+  .org-cluster {
+    display: flex;
+    align-items: center;
+    gap: 0.65rem;
+    min-width: 0;
+  }
+  .org-avatar {
+    border-radius: 6px;
+    object-fit: cover;
+    flex-shrink: 0;
+  }
+  .org-text {
+    display: flex;
+    flex-direction: column;
+    gap: 0.1rem;
+    line-height: 1.2;
+    min-width: 0;
+  }
+  .org-login {
+    font-weight: 700;
+    font-size: 0.95rem;
+    word-break: break-word;
+  }
+  .org-display-name {
+    font-weight: 400;
+    font-size: 0.85rem;
+    color: #444;
+    word-break: break-word;
   }
   .user-avatar {
     border-radius: 50%;

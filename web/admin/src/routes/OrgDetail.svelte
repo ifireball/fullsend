@@ -1,7 +1,9 @@
 <script lang="ts">
+  import { onMount } from "svelte";
   import { get } from "svelte/store";
   import { RequestError } from "@octokit/request-error";
   import { githubUser } from "../lib/auth/session";
+  import { setNavOrgContext } from "../lib/shell/navOrgContext";
   import { loadToken } from "../lib/auth/tokenStore";
   import { createUserOctokit } from "../lib/github/client";
   import { analyzeOrgLayers } from "../lib/layers/analyzeOrg";
@@ -37,7 +39,6 @@
   let rowResolveAbort: AbortController | null = null;
 
   let pageError = $state<string | null>(null);
-  let orgMetaLoading = $state(true);
   let orgDisplayName = $state<string | null>(null);
   let orgAvatarUrl = $state<string | null>(null);
 
@@ -152,7 +153,8 @@
     pageError = null;
     configValidateError = null;
     layersError = null;
-    orgMetaLoading = true;
+    orgDisplayName = null;
+    orgAvatarUrl = null;
     listLoading = true;
     layersLoading = true;
     rollupStatus = null;
@@ -165,7 +167,6 @@
     const token = loadToken()?.accessToken;
     if (!token || !org) {
       pageError = !org ? "Missing organisation." : "Sign in to load this organisation.";
-      orgMetaLoading = false;
       listLoading = false;
       layersLoading = false;
       return;
@@ -187,12 +188,10 @@
         pageError =
           e instanceof Error ? e.message : "Failed to load organisation metadata.";
       }
-      orgMetaLoading = false;
       listLoading = false;
       layersLoading = false;
       return;
     }
-    orgMetaLoading = false;
 
     const githubNames: string[] = [];
     try {
@@ -272,7 +271,6 @@
     const unsub = githubUser.subscribe((u) => {
       if (!o) {
         pageError = "Missing organisation.";
-        orgMetaLoading = false;
         listLoading = false;
         layersLoading = false;
         return;
@@ -285,7 +283,6 @@
         rollupStatus = null;
         listLoading = false;
         layersLoading = false;
-        orgMetaLoading = false;
         rowUi = {};
         return;
       }
@@ -319,6 +316,24 @@
     return () => rowResolveAbort?.abort();
   });
 
+  /** UX account bar: org avatar + name to the right of the user cluster (same header as shell). */
+  $effect(() => {
+    const o = org;
+    if (!o) {
+      setNavOrgContext(null);
+      return;
+    }
+    setNavOrgContext({
+      login: o,
+      avatarUrl: orgAvatarUrl ?? orgGravatarFallback(o),
+      displayName: orgDisplayName,
+    });
+  });
+
+  onMount(() => {
+    return () => setNavOrgContext(null);
+  });
+
   async function retryRow(name: string): Promise<void> {
     const token = loadToken()?.accessToken;
     if (!token) return;
@@ -343,32 +358,6 @@
 </script>
 
 <section class="dash" aria-labelledby="dash-title">
-  <nav class="crumb" aria-label="Breadcrumb">
-    <a class="crumb-link" href="#/orgs">Organisations</a>
-    <span class="crumb-sep" aria-hidden="true">/</span>
-    <span class="crumb-current">{org}</span>
-  </nav>
-
-  <div class="org-context">
-    {#if orgMetaLoading}
-      <div class="org-context-spinner" aria-hidden="true"></div>
-    {:else if orgAvatarUrl}
-      <img
-        class="org-context-avatar"
-        src={orgAvatarUrl}
-        alt=""
-        width="40"
-        height="40"
-      />
-    {/if}
-    <div class="org-context-text">
-      <span class="org-context-login">{org}</span>
-      {#if orgDisplayName && orgDisplayName !== org}
-        <span class="org-context-name">{orgDisplayName}</span>
-      {/if}
-    </div>
-  </div>
-
   <h1 id="dash-title">Organisation dashboard</h1>
 
   {#if pageError}
@@ -557,60 +546,6 @@
 <style>
   .dash {
     max-width: 48rem;
-  }
-  .crumb {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 0.35rem;
-    font-size: 0.88rem;
-    margin-bottom: 0.75rem;
-  }
-  .crumb-link {
-    color: #0969da;
-    text-decoration: none;
-  }
-  .crumb-link:hover {
-    text-decoration: underline;
-  }
-  .crumb-sep {
-    color: #57606a;
-  }
-  .crumb-current {
-    font-weight: 600;
-    color: #24292f;
-  }
-  .org-context {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-    margin-bottom: 1rem;
-  }
-  .org-context-spinner {
-    width: 2.5rem;
-    height: 2.5rem;
-    border: 3px solid #d0d7de;
-    border-top-color: #24292f;
-    border-radius: 50%;
-    animation: spin 0.75s linear infinite;
-  }
-  .org-context-avatar {
-    border-radius: 8px;
-    object-fit: cover;
-  }
-  .org-context-text {
-    display: flex;
-    flex-direction: column;
-    gap: 0.15rem;
-    line-height: 1.25;
-  }
-  .org-context-login {
-    font-weight: 700;
-    font-size: 1.05rem;
-  }
-  .org-context-name {
-    font-size: 0.9rem;
-    color: #57606a;
   }
   @keyframes spin {
     to {
