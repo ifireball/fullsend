@@ -62,3 +62,10 @@ export async function analyzeConfigRepoLayer(
   report.details = [`${CONFIG_FILE_PATH} exists and is valid`];
   return report;
 }
+
+/** True when the config-repo layer is **not installed** (org-list Deploy branch, before gates). */
+export function configRepoIsGreenfieldDeploy(
+  report: LayerReport | undefined,
+): boolean {
+  return report?.name === "config-repo" && report.status === "not_installed";
+}

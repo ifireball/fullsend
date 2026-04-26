@@ -6,6 +6,7 @@ import {
   isLikelyGitHubRateLimit403,
   userGitHubRestRateLimitShortMessage,
 } from "./githubPermissionHints";
+import { configRepoIsGreenfieldDeploy } from "../layers/configRepo";
 import { CONFIG_FILE_PATH, CONFIG_REPO_NAME } from "../layers/constants";
 import { createLayerGithub } from "../layers/githubClient";
 import {
@@ -215,7 +216,7 @@ export function orgListRowFromAnalysis(
     return { kind: "error", message: "Missing config-repo layer report." };
   }
 
-  if (configReport.status === "not_installed") {
+  if (configRepoIsGreenfieldDeploy(configReport)) {
     if (rowContext.membershipCanCreateRepository === false) {
       return cannotDeployOrgMembershipCannotCreateRepo();
     }

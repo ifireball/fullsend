@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { LayerGithub } from "./githubClient";
-import { analyzeConfigRepoLayer } from "./configRepo";
+import { analyzeConfigRepoLayer, configRepoIsGreenfieldDeploy } from "./configRepo";
 import type { LayerReport } from "../status/types";
 
 const validYaml = `version: "1"
@@ -109,5 +109,29 @@ describe("analyzeConfigRepoLayer", () => {
     if (want.detailIncludes !== undefined) {
       expect(got.details.join("\n")).toContain(want.detailIncludes);
     }
+  });
+});
+
+describe("configRepoIsGreenfieldDeploy", () => {
+  it("is true only for config-repo not_installed", () => {
+    expect(
+      configRepoIsGreenfieldDeploy({
+        name: "config-repo",
+        status: "not_installed",
+        details: [],
+        wouldInstall: [],
+        wouldFix: [],
+      }),
+    ).toBe(true);
+    expect(
+      configRepoIsGreenfieldDeploy({
+        name: "config-repo",
+        status: "installed",
+        details: [],
+        wouldInstall: [],
+        wouldFix: [],
+      }),
+    ).toBe(false);
+    expect(configRepoIsGreenfieldDeploy(undefined)).toBe(false);
   });
 });

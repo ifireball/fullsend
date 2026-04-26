@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   agentsFromConfig,
+  defaultFullsendAgentRows,
   enabledReposFromConfig,
   parseOrgConfigYaml,
   validateOrgConfig,
@@ -64,6 +65,15 @@ repos: {}
     expect(agentsFromConfig(cfg)).toEqual([
       { role: "fullsend" },
       { role: "coder" },
+    ]);
+  });
+
+  it("defaultFullsendAgentRows matches CLI install default", () => {
+    expect(defaultFullsendAgentRows().map((a) => a.role)).toEqual([
+      "fullsend",
+      "triage",
+      "coder",
+      "review",
     ]);
   });
 });

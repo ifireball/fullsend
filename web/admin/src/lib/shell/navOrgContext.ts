@@ -7,6 +7,11 @@ export type NavOrgContext = {
   displayName: string | null;
   /** Set on `#/org/:login/setup` after analyze: drives the nav bar cluster after the org. */
   setupFlow?: "deploy" | "repair";
+  /**
+   * When `false`, the org segment is plain text (no dashboard link). Used on
+   * setup for greenfield deploy so users stay in install until config exists.
+   */
+  orgClusterLinksToDashboard?: boolean;
 };
 
 export const navOrgContext = writable<NavOrgContext | null>(null);

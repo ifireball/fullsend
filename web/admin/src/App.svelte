@@ -205,27 +205,50 @@
       </a>
       {#if $navOrgContext}
         <span class="nav-sep" aria-hidden="true">/</span>
-        <a
-          class="org-cluster org-cluster--link"
-          href="#/org/{encodeURIComponent($navOrgContext.login)}"
-          aria-label="Organisation {$navOrgContext.login} — open dashboard"
-        >
-          {#if $navOrgContext.avatarUrl}
-            <img
-              class="org-avatar"
-              src={$navOrgContext.avatarUrl}
-              alt=""
-              width="32"
-              height="32"
-            />
-          {/if}
-          <div class="org-text">
-            <span class="org-login">{$navOrgContext.login}</span>
-            {#if $navOrgContext.displayName && $navOrgContext.displayName !== $navOrgContext.login}
-              <span class="org-display-name">{$navOrgContext.displayName}</span>
+        {#if $navOrgContext.orgClusterLinksToDashboard === false}
+          <div
+            class="org-cluster org-cluster--static"
+            aria-label="Organisation {$navOrgContext.login}"
+          >
+            {#if $navOrgContext.avatarUrl}
+              <img
+                class="org-avatar"
+                src={$navOrgContext.avatarUrl}
+                alt=""
+                width="32"
+                height="32"
+              />
             {/if}
+            <div class="org-text">
+              <span class="org-login">{$navOrgContext.login}</span>
+              {#if $navOrgContext.displayName && $navOrgContext.displayName !== $navOrgContext.login}
+                <span class="org-display-name">{$navOrgContext.displayName}</span>
+              {/if}
+            </div>
           </div>
-        </a>
+        {:else}
+          <a
+            class="org-cluster org-cluster--link"
+            href="#/org/{encodeURIComponent($navOrgContext.login)}"
+            aria-label="Organisation {$navOrgContext.login} — open dashboard"
+          >
+            {#if $navOrgContext.avatarUrl}
+              <img
+                class="org-avatar"
+                src={$navOrgContext.avatarUrl}
+                alt=""
+                width="32"
+                height="32"
+              />
+            {/if}
+            <div class="org-text">
+              <span class="org-login">{$navOrgContext.login}</span>
+              {#if $navOrgContext.displayName && $navOrgContext.displayName !== $navOrgContext.login}
+                <span class="org-display-name">{$navOrgContext.displayName}</span>
+              {/if}
+            </div>
+          </a>
+        {/if}
         {#if $navOrgContext.setupFlow}
           <span class="nav-sep" aria-hidden="true">/</span>
           <div class="setup-flow-cluster" aria-current="page">
@@ -531,6 +554,9 @@
   }
   a.org-cluster--link:focus-visible {
     outline: 2px solid #0969da;
+  }
+  .org-cluster--static {
+    cursor: default;
   }
   .setup-flow-cluster {
     display: flex;

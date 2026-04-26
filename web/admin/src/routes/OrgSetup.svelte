@@ -7,12 +7,18 @@
   import { createUserOctokit } from "../lib/github/client";
   import { analyzeOrgLayers } from "../lib/layers/analyzeOrg";
   import {
+    analyzeConfigRepoLayer,
+    configRepoIsGreenfieldDeploy,
+  } from "../lib/layers/configRepo";
+  import {
     CONFIG_FILE_PATH,
     CONFIG_REPO_NAME,
   } from "../lib/layers/constants";
   import { createLayerGithub } from "../lib/layers/githubClient";
   import {
     agentsFromConfig,
+    DEFAULT_FULLSEND_ORG_AGENT_ROLES,
+    defaultFullsendAgentRows,
     enabledReposFromConfig,
     parseOrgConfigYaml,
     validateOrgConfig,
@@ -36,13 +42,17 @@
   let analyzeError = $state<string | null>(null);
   let analyzePending = $state(true);
   let groups = $state<SetupGroupViewModel[]>([]);
-  /** Drives nav bar "Deploy" vs "Repair" cluster after org; null until analyze succeeds. */
+  /** Drives nav bar "Deploy" vs "Repair" cluster after org; set after config-repo probe. */
   let setupFlow = $state<"deploy" | "repair" | null>(null);
+  /** True when config-repo layer is not installed (org list would branch to Deploy). */
+  let greenfieldDeploy = $state(false);
 
   const placeholderCardCount = $derived(
     parsedConfig
       ? Math.max(1, agentsFromConfig(parsedConfig).length + 1)
-      : 2,
+      : greenfieldDeploy
+        ? DEFAULT_FULLSEND_ORG_AGENT_ROLES.length + 1
+        : 2,
   );
 
   function orgGravatarFallback(login: string): string {
@@ -61,6 +71,7 @@
     analyzePending = true;
     groups = [];
     setupFlow = null;
+    greenfieldDeploy = false;
     orgDisplayName = null;
     orgAvatarUrl = null;
     parsedConfig = null;
@@ -116,23 +127,39 @@
     parsedConfig = cfg;
 
     try {
-      const agents = cfg ? agentsFromConfig(cfg) : [];
+      const configProbe = await analyzeConfigRepoLayer(org, gh);
+      if (signal.aborted || gen !== loadGen) return;
+
+      greenfieldDeploy = configRepoIsGreenfieldDeploy(configProbe);
+      setupFlow = greenfieldDeploy ? "deploy" : "repair";
+
+      const agents = cfg
+        ? agentsFromConfig(cfg)
+        : greenfieldDeploy
+          ? defaultFullsendAgentRows()
+          : [];
       const enabledRepos = cfg ? enabledReposFromConfig(cfg) : [];
-      const { reports, rollup } = await analyzeOrgLayers({
+      const { reports } = await analyzeOrgLayers({
         org,
         gh,
         agents,
         enabledRepos,
       });
       if (signal.aborted || gen !== loadGen) return;
+
+      const configReport = reports.find((r) => r.name === "config-repo");
+      const listDeploy = configRepoIsGreenfieldDeploy(configReport);
+      greenfieldDeploy = listDeploy;
+      setupFlow = listDeploy ? "deploy" : "repair";
+
       groups = mapAnalyzeToGroups(reports, agents);
-      setupFlow = rollup === "not_installed" ? "deploy" : "repair";
     } catch (e) {
       if (signal.aborted || gen !== loadGen) return;
       analyzeError =
         e instanceof Error ? e.message : "Failed to analyze Fullsend deployment status.";
       groups = [];
       setupFlow = null;
+      greenfieldDeploy = false;
     } finally {
       if (!signal.aborted && gen === loadGen) {
         analyzePending = false;
@@ -147,6 +174,7 @@
         pageError = "Missing organisation.";
         analyzePending = false;
         setupFlow = null;
+        greenfieldDeploy = false;
         setNavOrgContext(null);
         return;
       }
@@ -156,6 +184,7 @@
         analyzePending = false;
         groups = [];
         setupFlow = null;
+        greenfieldDeploy = false;
         setNavOrgContext(null);
         return;
       }
@@ -170,15 +199,19 @@
   $effect(() => {
     const o = org;
     const flow = setupFlow;
+    const pending = analyzePending;
     if (!o) {
       setNavOrgContext(null);
       return;
     }
+    const orgClusterLinksToDashboard =
+      !pending && (flow === null || flow === "repair");
     setNavOrgContext({
       login: o,
       avatarUrl: orgAvatarUrl ?? orgGravatarFallback(o),
       displayName: orgDisplayName,
       ...(flow ? { setupFlow: flow } : {}),
+      orgClusterLinksToDashboard,
     });
   });
 

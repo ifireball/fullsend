@@ -15,6 +15,18 @@ export type OrgConfigYaml = {
 
 const VALID_ROLES = new Set(["fullsend", "triage", "coder", "review"]);
 
+/** Matches `internal/cli/admin.go` `--agents` default for greenfield install. */
+export const DEFAULT_FULLSEND_ORG_AGENT_ROLES = [
+  "fullsend",
+  "triage",
+  "coder",
+  "review",
+] as const;
+
+export function defaultFullsendAgentRows(): { role: string }[] {
+  return DEFAULT_FULLSEND_ORG_AGENT_ROLES.map((role) => ({ role }));
+}
+
 export function parseOrgConfigYaml(data: string): OrgConfigYaml {
   const doc = parse(data) as unknown;
   if (doc === null || typeof doc !== "object" || Array.isArray(doc)) {
