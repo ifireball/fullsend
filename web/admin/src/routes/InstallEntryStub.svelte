@@ -1,33 +1,25 @@
 <script lang="ts">
   let { params = { org: "" } }: { params?: { org?: string } } = $props();
-  const org = $derived(params?.org ?? "");
+  const org = $derived((params?.org ?? "").trim());
+
+  $effect(() => {
+    const o = org;
+    if (!o || typeof window === "undefined") return;
+    const target = `#/org/${encodeURIComponent(o)}/setup`;
+    if (window.location.hash !== target) {
+      window.location.replace(
+        `${window.location.pathname}${window.location.search}${target}`,
+      );
+    }
+  });
 </script>
 
-<section class="stub" aria-labelledby="inst-h">
-  <h1 id="inst-h">Deploy Fullsend — {org}</h1>
-  <p class="lede">
-    Install / onboard wizard flows are planned in <strong>Tasks 13–14</strong> of the admin SPA
-    plan.
-  </p>
-  <p>
-    <a class="back" href="#/orgs">← Back to organisations</a>
-  </p>
-</section>
+<p class="redirect-msg" role="status">Opening setup…</p>
 
 <style>
-  .stub {
-    max-width: 40rem;
-  }
-  .stub h1 {
-    margin: 0 0 0.5rem;
-    font-size: 1.2rem;
-  }
-  .lede {
-    margin: 0 0 1rem;
-    line-height: 1.5;
-    color: #333;
-  }
-  .back {
-    color: #0969da;
+  .redirect-msg {
+    margin: 1rem 0;
+    font-size: 0.95rem;
+    color: #444;
   }
 </style>

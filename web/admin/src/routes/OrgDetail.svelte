@@ -393,25 +393,25 @@
           <span class="status-dot status-dot--ok" aria-hidden="true"></span>
           <span>Deployed</span>
           <button type="button" class="btn" disabled title="Coming in a later task">Upgrade</button>
-          <button type="button" class="btn" disabled title="Coming in a later task">Repair</button>
+          <a class="btn" href="#/org/{encodeURIComponent(org)}/setup">Repair</a>
         </div>
       {:else if rollupStatus === "degraded"}
         <div class="status-line">
           <span class="status-warn" aria-hidden="true">▲</span>
           <span>Partially deployed / broken</span>
-          <button type="button" class="btn" disabled title="Coming in a later task">Repair</button>
+          <a class="btn" href="#/org/{encodeURIComponent(org)}/setup">Repair</a>
         </div>
       {:else if rollupStatus === "not_installed"}
         <div class="status-line">
           <span class="status-warn" aria-hidden="true">▲</span>
           <span>Partially deployed / broken</span>
-          <button type="button" class="btn" disabled title="Coming in a later task">Repair</button>
+          <a class="btn" href="#/org/{encodeURIComponent(org)}/setup">Repair</a>
         </div>
       {:else if rollupStatus === "unknown"}
         <div class="status-line">
           <span class="status-warn" aria-hidden="true">▲</span>
           <span>Partially deployed / broken</span>
-          <button type="button" class="btn" disabled title="Coming in a later task">Repair</button>
+          <a class="btn" href="#/org/{encodeURIComponent(org)}/setup">Repair</a>
         </div>
       {:else}
         <div class="status-line" role="status" aria-live="polite" aria-busy="true">
@@ -630,6 +630,13 @@
     background: #f4f4f4;
     font: inherit;
     font-size: 0.88rem;
+  }
+  a.btn {
+    text-decoration: none;
+    color: inherit;
+    display: inline-flex;
+    align-items: center;
+    box-sizing: border-box;
   }
   .btn:disabled {
     opacity: 0.55;

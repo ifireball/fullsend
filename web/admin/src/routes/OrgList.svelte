@@ -410,7 +410,7 @@
                 {:else if ui.kind === "deploy"}
                   <a
                     class="btn btn-primary"
-                    href="#/install/{encodeURIComponent(o.login)}"
+                    href="#/org/{encodeURIComponent(o.login)}/setup"
                   >
                     Deploy Fullsend
                   </a>

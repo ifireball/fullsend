@@ -4,6 +4,7 @@
   import InstallEntryStub from "./routes/InstallEntryStub.svelte";
   import OrgDetail from "./routes/OrgDetail.svelte";
   import OrgList from "./routes/OrgList.svelte";
+  import OrgSetup from "./routes/OrgSetup.svelte";
   import {
     authBootPending,
     githubUser,
@@ -26,8 +27,9 @@
   const routes = {
     "/": OrgList,
     "/orgs": OrgList,
-    "/org/:org": OrgDetail,
     "/install/:org": InstallEntryStub,
+    "/org/:org/setup": OrgSetup,
+    "/org/:org": OrgDetail,
   };
 
   let oauthErr = $state<string | null>(null);
