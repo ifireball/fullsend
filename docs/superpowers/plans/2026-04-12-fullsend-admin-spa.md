@@ -1069,6 +1069,8 @@ git commit -m "feat(admin): TS analyze for workflows layer"
 
 ### Task 12: Org detail + repo union list (read-only)
 
+**Status (2026-04-26):** **Complete** — `web/admin/src/lib/repos/unionConfig.ts` (+ Vitest), `web/admin/src/routes/OrgDetail.svelte` (replaces stub), `#/org/:org` route in `App.svelte`.
+
 **UX spec (this task is the main surface for):** [Screen: Organisation dashboard](../specs/2026-04-21-fullsend-admin-spa-ux-design.md#screen-organisation-dashboard) — **Pane A** (Fullsend status) + **Pane B** (repository list). There is **no** separate repo onboarding/settings wizard: all repo outcomes are **rows** on that list ([Scope clarification](../specs/2026-04-21-fullsend-admin-spa-ux-design.md#scope-clarification-repositories)).
 
 **Files:**
@@ -1076,11 +1078,11 @@ git commit -m "feat(admin): TS analyze for workflows layer"
 - Create: `admin/src/routes/OrgDetail.svelte`
 - Create: `admin/src/lib/repos/unionConfig.ts` — union org repos + `config.yaml` repo names; classify orphan / missing
 
-- [ ] **Step 1: Vitest for pure union/classification** with fixture YAML strings in test file. Fixtures should cover **R6** / **R7** style cases from [Repo row states](../specs/2026-04-21-fullsend-admin-spa-ux-design.md#repo-row-states-complete-set) (not-in-config vs orphan).
+- [x] **Step 1: Vitest for pure union/classification** with fixture YAML strings in test file. Fixtures should cover **R6** / **R7** style cases from [Repo row states](../specs/2026-04-21-fullsend-admin-spa-ux-design.md#repo-row-states-complete-set) (not-in-config vs orphan).
 
-- [ ] **Step 2: Implement UI routes `#/org/:login`** (org dashboard). **Nav bar:** [Account bar](../specs/2026-04-21-fullsend-admin-spa-ux-design.md#screen-account--navigation-bar) shows user + org avatar/name for this screen. **Pane A:** status states and **Repair** / **Upgrade** as in UX spec (wire to routes or disabled stubs until Task 14). **Pane B:** search-as-you-type + **Refresh**; each row implements the **R0–R7** trailing clusters where read-only data allows (e.g. **Onboard** / **Onboarding — check PR #nnn** / **Off-boarding — check PR #nnn** / **Onboarded** + red **Remove** / partial + **Repair** + **Remove** / **Not in Fullsend config** + **Onboard** / orphan + **Repository missing** + **i** + **Remove from config**). Use [GitHub terminology](../specs/2026-04-21-fullsend-admin-spa-ux-design.md#github-terminology) for GitHub-sourced labels. **Errors:** [Per-row error pattern](../specs/2026-04-21-fullsend-admin-spa-ux-design.md#per-row-error-pattern-org-list-and-repo-list) (red triangle + **`Error`** + popover + **`Retry`**); pane-wide failures → [global banner](../specs/2026-04-21-fullsend-admin-spa-ux-design.md#global-banners-screen-level-below-the-nav-bar). **Interaction:** [List interaction model](../specs/2026-04-21-fullsend-admin-spa-ux-design.md#list-interaction-model) — primary actions on **buttons**; PR `#nnn` is a **link**. Read-only task: **Remove** / **Repair** / **Onboard** may be disabled or navigate to placeholders until Task 14 implements mutations.
+- [x] **Step 2: Implement UI routes `#/org/:login`** (org dashboard). **Nav bar:** [Account bar](../specs/2026-04-21-fullsend-admin-spa-ux-design.md#screen-account--navigation-bar) shows user + org avatar/name for this screen. **Pane A:** status states and **Repair** / **Upgrade** as in UX spec (wire to routes or disabled stubs until Task 14). **Pane B:** search-as-you-type + **Refresh**; each row implements the **R0–R7** trailing clusters where read-only data allows (e.g. **Onboard** / **Onboarding — check PR #nnn** / **Off-boarding — check PR #nnn** / **Onboarded** + red **Remove** / partial + **Repair** + **Remove** / **Not in Fullsend config** + **Onboard** / orphan + **Repository missing** + **i** + **Remove from config**). Use [GitHub terminology](../specs/2026-04-21-fullsend-admin-spa-ux-design.md#github-terminology) for GitHub-sourced labels. **Errors:** [Per-row error pattern](../specs/2026-04-21-fullsend-admin-spa-ux-design.md#per-row-error-pattern-org-list-and-repo-list) (red triangle + **`Error`** + popover + **`Retry`**); pane-wide failures → [global banner](../specs/2026-04-21-fullsend-admin-spa-ux-design.md#global-banners-screen-level-below-the-nav-bar). **Interaction:** [List interaction model](../specs/2026-04-21-fullsend-admin-spa-ux-design.md#list-interaction-model) — primary actions on **buttons**; PR `#nnn` is a **link**. Read-only task: **Remove** / **Repair** / **Onboard** may be disabled or navigate to placeholders until Task 14 implements mutations.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add admin/src/lib/repos admin/src/routes/OrgDetail.svelte
@@ -1197,7 +1199,7 @@ git commit -m "docs: admin SPA local development checklist"
 
 **2. Placeholder scan**
 
-No TBD/TODO strings. **Complete (2026-04-20 plan refresh):** Tasks **1**, **2**, **2b**, **3**, **4**, **4b** (Step 6 callback URL checklist ongoing), **5**, **6**, **7**. **Open:** **10–14**, **15** (preview OAuth redesign), **16** (local dev doc), **4b** Step 6.
+No TBD/TODO strings. **Complete (2026-04-20 plan refresh):** Tasks **1**, **2**, **2b**, **3**, **4**, **4b** (Step 6 callback URL checklist ongoing), **5**, **6**, **7**. **Task 12 (2026-04-26):** org dashboard + repo/config union (read-only). **Open:** **13–14**, **15** (preview OAuth redesign), **16** (local dev doc), **4b** Step 6.
 
 **3. Type consistency**
 
