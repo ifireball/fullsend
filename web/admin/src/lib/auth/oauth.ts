@@ -185,7 +185,14 @@ function takeDocHandoff(): OAuthHandoff | null {
 
 export type OAuthCompleteResult =
   | { ok: true }
-  | { ok: false; error: string };
+  | {
+      ok: false;
+      error: string;
+      /** `/api/github/user` failed after token was stored — banner Retry calls `refreshSession`. */
+      profileLoadFailed?: boolean;
+      /** Transient token-exchange failure — Retry starts a new GitHub sign-in round. */
+      oauthRoundRetry?: boolean;
+    };
 
 export type CompleteGithubOAuthOptions = {
   /** When aborted (e.g. user picks “different account”), token exchange is skipped. */
@@ -194,6 +201,11 @@ export type CompleteGithubOAuthOptions = {
 
 function isAbortError(e: unknown): boolean {
   return e instanceof DOMException && e.name === "AbortError";
+}
+
+/** True when starting a new OAuth round may recover (network blip or overloaded Worker). */
+function tokenExchangeAllowsOAuthRoundRetry(res: Response): boolean {
+  return res.status >= 500 || res.status === 429;
 }
 
 /**
@@ -322,6 +334,7 @@ export async function completeGithubOAuthFromHandoff(
         e instanceof Error
           ? e.message
           : "Network error calling token exchange (is `npm run dev` running?)",
+      oauthRoundRetry: true,
     };
   }
 
@@ -350,7 +363,13 @@ export async function completeGithubOAuthFromHandoff(
           ? body.error
           : "token_exchange_failed";
     clearOAuthState();
-    return { ok: false, error: `GitHub token exchange failed: ${desc}` };
+    return {
+      ok: false,
+      error: `GitHub token exchange failed: ${desc}`,
+      ...(tokenExchangeAllowsOAuthRoundRetry(res)
+        ? { oauthRoundRetry: true as const }
+        : {}),
+    };
   }
 
   const access_token =
@@ -379,6 +398,22 @@ export async function completeGithubOAuthFromHandoff(
     return { ok: false, error: SIGNING_IN_CANCELLED_MESSAGE };
   }
 
-  await refreshSession();
+  const sessionResult = await refreshSession();
+  if (!sessionResult.ok) {
+    if (sessionResult.kind === "profile_error") {
+      return {
+        ok: false,
+        error: sessionResult.message,
+        profileLoadFailed: true,
+      };
+    }
+    if (sessionResult.kind === "unauthorized") {
+      return {
+        ok: false,
+        error: "GitHub rejected this session — sign in again.",
+      };
+    }
+  }
+
   return { ok: true };
 }

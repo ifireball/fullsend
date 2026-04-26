@@ -191,7 +191,12 @@ describe("completeGithubOAuthFromHandoff", () => {
     sessionStorage.clear();
     localStorage.clear();
     vi.mocked(obtainTurnstileToken).mockReset().mockResolvedValue("ts-token");
-    vi.mocked(refreshSession).mockReset().mockResolvedValue(undefined);
+    vi.mocked(refreshSession)
+      .mockReset()
+      .mockResolvedValue({
+        ok: true,
+        user: { login: "oauth-user", name: null, avatarUrl: null },
+      });
     vi.stubGlobal(
       "fetch",
       vi.fn().mockResolvedValue(
@@ -310,6 +315,77 @@ describe("completeGithubOAuthFromHandoff", () => {
       turnstile_token: "ts-token",
     });
     expect(typeof body.redirect_uri).toBe("string");
+  });
+
+  it("returns profileLoadFailed when token saved but refreshSession fails on profile", async () => {
+    vi.mocked(refreshSession).mockResolvedValueOnce({
+      ok: false,
+      kind: "profile_error",
+      message: "GitHub /user failed: 503",
+    });
+    const nonce = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
+    const expanded = workerExpandedStateB64(nonce);
+    sessionStorage.setItem(
+      OAUTH_DOC_HANDOFF_KEY,
+      JSON.stringify({ code: "exchange-code", state: expanded }),
+    );
+    sessionStorage.setItem(OAUTH_STATE_KEY, nonce);
+    sessionStorage.setItem(PKCE_VERIFIER_KEY, "pkce-verifier-value");
+
+    const r = await completeGithubOAuthFromHandoff();
+
+    expect(r).toEqual({
+      ok: false,
+      error: "GitHub /user failed: 503",
+      profileLoadFailed: true,
+    });
+    expect(loadToken()?.accessToken).toBe("access-xyz");
+  });
+
+  it("flags oauthRoundRetry when token POST returns 503", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ error: "temporarily_unavailable" }), {
+          status: 503,
+          headers: { "Content-Type": "application/json" },
+        }),
+      ),
+    );
+    const nonce = "cccccccc-cccc-cccc-cccc-cccccccccccc";
+    const expanded = workerExpandedStateB64(nonce);
+    sessionStorage.setItem(
+      OAUTH_DOC_HANDOFF_KEY,
+      JSON.stringify({ code: "exchange-code", state: expanded }),
+    );
+    sessionStorage.setItem(OAUTH_STATE_KEY, nonce);
+    sessionStorage.setItem(PKCE_VERIFIER_KEY, "pkce-verifier-value");
+
+    const r = await completeGithubOAuthFromHandoff();
+
+    expect(r).toMatchObject({ ok: false, oauthRoundRetry: true });
+  });
+
+  it("flags oauthRoundRetry on network failure during token POST", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("Failed to fetch")));
+    const nonce = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
+    const expanded = workerExpandedStateB64(nonce);
+    sessionStorage.setItem(
+      OAUTH_DOC_HANDOFF_KEY,
+      JSON.stringify({ code: "exchange-code", state: expanded }),
+    );
+    sessionStorage.setItem(OAUTH_STATE_KEY, nonce);
+    sessionStorage.setItem(PKCE_VERIFIER_KEY, "pkce-verifier-value");
+
+    const r = await completeGithubOAuthFromHandoff();
+
+    expect(r).toMatchObject({
+      ok: false,
+      oauthRoundRetry: true,
+    });
+    if (!r.ok) {
+      expect(r.error).toContain("fetch");
+    }
   });
 
   it("persists null expiresAt when token response omits expires_in", async () => {

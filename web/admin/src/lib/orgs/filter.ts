@@ -13,7 +13,8 @@ export type OrgRow = {
 };
 
 /**
- * Case-insensitive substring search over org logins, then alphabetical sort.
+ * Case-insensitive **substring** search over organisation logins (matches UX spec),
+ * then alphabetical sort.
  */
 export function filterOrgsBySearch(orgs: OrgRow[], q: string): OrgRow[] {
   const p = q.trim().toLowerCase();

@@ -10,6 +10,7 @@ import { fetchGitHubUser, GitHubUserRequestError } from "../github/user";
 import {
   githubLogin,
   githubUser,
+  profileLoadFailed,
   reauthenticateSuggested,
   refreshSession,
   signOut,
@@ -21,14 +22,17 @@ beforeEach(() => {
   vi.mocked(fetchGitHubUser).mockReset();
   githubUser.set(null);
   reauthenticateSuggested.set(false);
+  profileLoadFailed.set(null);
 });
 
 describe("refreshSession", () => {
   it("clears githubUser when there is no stored token", async () => {
     githubUser.set({ login: "ghost", name: null, avatarUrl: null });
-    await refreshSession();
+    const r = await refreshSession();
+    expect(r).toEqual({ ok: false, kind: "no_token" });
     expect(get(githubUser)).toBeNull();
     expect(get(githubLogin)).toBeNull();
+    expect(get(profileLoadFailed)).toBeNull();
     expect(fetchGitHubUser).not.toHaveBeenCalled();
   });
 
@@ -44,8 +48,16 @@ describe("refreshSession", () => {
       avatarUrl: "https://avatars.githubusercontent.com/u/1?v=4",
     });
 
-    await refreshSession();
+    const r = await refreshSession();
 
+    expect(r).toMatchObject({
+      ok: true,
+      user: {
+        login: "alice",
+        name: "Alice L",
+        avatarUrl: "https://avatars.githubusercontent.com/u/1?v=4",
+      },
+    });
     expect(fetchGitHubUser).toHaveBeenCalledWith("tok");
     expect(get(githubUser)).toEqual({
       login: "alice",
@@ -54,6 +66,7 @@ describe("refreshSession", () => {
     });
     expect(get(githubLogin)).toBe("alice");
     expect(get(reauthenticateSuggested)).toBe(false);
+    expect(get(profileLoadFailed)).toBeNull();
   });
 
   it("clears reauthenticateSuggested after successful refresh", async () => {
@@ -72,6 +85,7 @@ describe("refreshSession", () => {
     await refreshSession();
 
     expect(get(reauthenticateSuggested)).toBe(false);
+    expect(get(profileLoadFailed)).toBeNull();
   });
 
   it("clears githubUser but keeps stored token when fetchGitHubUser throws generically", async () => {
@@ -83,10 +97,12 @@ describe("refreshSession", () => {
     githubUser.set({ login: "stale", name: null, avatarUrl: null });
     vi.mocked(fetchGitHubUser).mockRejectedValue(new Error("network"));
 
-    await refreshSession();
+    const r = await refreshSession();
 
+    expect(r).toMatchObject({ ok: false, kind: "profile_error", message: "network" });
     expect(get(githubUser)).toBeNull();
     expect(get(githubLogin)).toBeNull();
+    expect(get(profileLoadFailed)).toEqual({ message: "network" });
     expect(localStorage.getItem("fullsend_admin_github_token")).not.toBeNull();
   });
 
@@ -101,12 +117,14 @@ describe("refreshSession", () => {
       new GitHubUserRequestError(401, "GitHub /user failed: 401 "),
     );
 
-    await refreshSession();
+    const r = await refreshSession();
 
+    expect(r).toEqual({ ok: false, kind: "unauthorized" });
     expect(localStorage.getItem("fullsend_admin_github_token")).toBeNull();
     expect(get(githubUser)).toBeNull();
     expect(get(githubLogin)).toBeNull();
     expect(get(reauthenticateSuggested)).toBe(true);
+    expect(get(profileLoadFailed)).toBeNull();
   });
 
   it("does not call fetchGitHubUser when stored token is already expired", async () => {
@@ -117,11 +135,13 @@ describe("refreshSession", () => {
     });
     githubUser.set({ login: "stale", name: null, avatarUrl: null });
 
-    await refreshSession();
+    const r = await refreshSession();
 
+    expect(r).toEqual({ ok: false, kind: "no_token" });
     expect(fetchGitHubUser).not.toHaveBeenCalled();
     expect(get(githubUser)).toBeNull();
     expect(get(githubLogin)).toBeNull();
+    expect(get(profileLoadFailed)).toBeNull();
     expect(localStorage.getItem("fullsend_admin_github_token")).toBeNull();
   });
 });
@@ -141,6 +161,7 @@ describe("signOut", () => {
     expect(localStorage.getItem("fullsend_admin_github_token")).toBeNull();
     expect(get(githubUser)).toBeNull();
     expect(get(githubLogin)).toBeNull();
+    expect(get(profileLoadFailed)).toBeNull();
     expect(get(reauthenticateSuggested)).toBe(false);
   });
 });

@@ -7,6 +7,7 @@
   import {
     authBootPending,
     githubUser,
+    profileLoadFailed,
     reauthenticateSuggested,
     refreshSession,
     signOut,
@@ -29,6 +30,8 @@
   };
 
   let oauthErr = $state<string | null>(null);
+  /** After transient token-exchange failure, offer Retry to start a new GitHub sign-in round. */
+  let oauthShowRoundRetry = $state(false);
 
   /** Aborts in-flight OAuth completion (Turnstile + token exchange). */
   let oauthBootAbort: AbortController | null = null;
@@ -44,6 +47,7 @@
 
   async function beginGithubSignIn(): Promise<void> {
     oauthErr = null;
+    oauthShowRoundRetry = false;
     reauthenticateSuggested.set(false);
     try {
       await startGithubSignIn();
@@ -71,12 +75,21 @@
           const result = await completeGithubOAuthFromHandoff({ signal });
           if (signal.aborted) return;
           if (!result.ok) {
-            if (result.error !== SIGNING_IN_CANCELLED_MESSAGE) {
+            if (result.error === SIGNING_IN_CANCELLED_MESSAGE) {
+              /* keep intended hash for a deliberate retry */
+            } else if (result.profileLoadFailed) {
+              oauthErr = null;
+              oauthShowRoundRetry = false;
+            } else {
               oauthErr = result.error;
-              clearIntendedHashStash();
+              oauthShowRoundRetry = Boolean(result.oauthRoundRetry);
+              if (!result.oauthRoundRetry) {
+                clearIntendedHashStash();
+              }
             }
           } else {
             oauthErr = null;
+            oauthShowRoundRetry = false;
             const intended = consumeIntendedHashAfterGithubOAuth();
             if (intended && intended !== "#/" && intended !== "") {
               window.location.hash = intended;
@@ -102,6 +115,10 @@
       authBootPending.set(false);
     };
   });
+
+  async function retryProfileLoad(): Promise<void> {
+    await refreshSession();
+  }
 </script>
 
 {#if $authBootPending}
@@ -138,6 +155,26 @@
     >
       Sign in with a different account
     </button>
+  </div>
+{:else if $profileLoadFailed}
+  <div class="profile-recover-screen">
+    <div class="banner banner--err banner--edge" role="alert">
+      <span class="banner-msg">{$profileLoadFailed.message}</span>
+      <button
+        type="button"
+        class="btn banner-action primary"
+        onclick={() => void retryProfileLoad()}
+      >
+        Retry
+      </button>
+      <button type="button" class="btn banner-action" onclick={() => signOut()}>
+        Sign out
+      </button>
+    </div>
+    <p class="profile-recover-hint">
+      Your sign-in token is stored in this browser. Retry loads your GitHub profile
+      again, or sign out to remove it and start over.
+    </p>
   </div>
 {:else if $githubUser}
   <header class="bar account-bar">
@@ -180,20 +217,21 @@
       <span class="banner-msg">{oauthErr}</span>
       <button
         type="button"
+        class="btn banner-action primary"
+        onclick={() => void beginGithubSignIn()}
+      >
+        {oauthShowRoundRetry ? "Retry" : "Re-authenticate"}
+      </button>
+      <button
+        type="button"
         class="btn banner-action"
         onclick={() => {
           oauthErr = null;
+          oauthShowRoundRetry = false;
           clearIntendedHashStash();
         }}
       >
         Dismiss
-      </button>
-      <button
-        type="button"
-        class="btn banner-action primary"
-        onclick={() => void beginGithubSignIn()}
-      >
-        Re-authenticate
       </button>
     </div>
   {/if}
@@ -207,20 +245,21 @@
       <span class="banner-msg">{oauthErr}</span>
       <button
         type="button"
+        class="btn banner-action primary"
+        onclick={() => void beginGithubSignIn()}
+      >
+        {oauthShowRoundRetry ? "Retry" : "Re-authenticate"}
+      </button>
+      <button
+        type="button"
         class="btn banner-action"
         onclick={() => {
           oauthErr = null;
+          oauthShowRoundRetry = false;
           clearIntendedHashStash();
         }}
       >
         Dismiss
-      </button>
-      <button
-        type="button"
-        class="btn banner-action primary"
-        onclick={() => void beginGithubSignIn()}
-      >
-        Re-authenticate
       </button>
     </div>
   {/if}
@@ -472,5 +511,19 @@
 
   .main {
     padding: 1rem;
+  }
+
+  .profile-recover-screen {
+    min-height: 100vh;
+    box-sizing: border-box;
+    padding: 1.25rem 1rem 2rem;
+    background: #fafafa;
+  }
+  .profile-recover-hint {
+    margin: 1rem 0 0;
+    max-width: 36rem;
+    font-size: 0.92rem;
+    line-height: 1.45;
+    color: #444;
   }
 </style>

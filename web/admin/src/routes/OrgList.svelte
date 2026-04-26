@@ -138,6 +138,10 @@
     return `cd-${login.replace(/[^a-zA-Z0-9_-]/g, "_")}`;
   }
 
+  function rowErrPopoverId(login: string): string {
+    return `re-${login.replace(/[^a-zA-Z0-9_-]/g, "_")}`;
+  }
+
   /** Debounced: search-as-you-type must not re-hit GitHub for every keystroke. */
   const ROW_ANALYSIS_DEBOUNCE_MS = 280;
   /** Pause between sequential org analyses (display order) to avoid REST bursts. */
@@ -448,12 +452,22 @@
                     </div>
                   </div>
                 {:else if ui.kind === "error"}
+                  {@const errId = rowErrPopoverId(o.login)}
                   <div class="row-err">
                     <span class="err-icon" aria-hidden="true">▲</span>
                     <span class="row-err-label">Error</span>
-                    <span class="row-err-msg" title={ui.message}>
-                      {ui.message}
-                    </span>
+                    <button
+                      type="button"
+                      class="info-btn info-btn--err"
+                      popovertarget={errId}
+                      aria-haspopup="dialog"
+                      aria-label={`Technical details for error on ${o.login}`}
+                    >
+                      i
+                    </button>
+                    <div id={errId} class="row-err-popover" popover>
+                      <p class="row-err-popover-lead">{ui.message}</p>
+                    </div>
                     <button
                       type="button"
                       class="btn row-err-retry"
@@ -698,6 +712,13 @@
     outline: 2px solid #0969da;
     outline-offset: 2px;
   }
+  .info-btn--err {
+    border-color: #cf222e;
+    background: #ffeef0;
+    color: #a40e26;
+    font-style: italic;
+    cursor: pointer;
+  }
   .cannot-deploy-popover {
     max-width: min(22rem, calc(100vw - 2rem));
     padding: 0.75rem 0.85rem;
@@ -736,7 +757,7 @@
     flex-wrap: wrap;
     align-items: center;
     gap: 0.35rem;
-    max-width: 18rem;
+    max-width: 20rem;
     font-size: 0.85rem;
     color: #a40e26;
   }
@@ -747,12 +768,21 @@
   .row-err-label {
     font-weight: 700;
   }
-  .row-err-msg {
-    flex: 1 1 8rem;
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+  .row-err-popover {
+    max-width: min(22rem, calc(100vw - 2rem));
+    padding: 0.75rem 0.85rem;
+    border: 1px solid #f0b2b2;
+    border-radius: 8px;
+    background: #fff8f8;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.12);
+    color: #24292f;
+    font-size: 0.85rem;
+    line-height: 1.45;
+    word-break: break-word;
+  }
+  .row-err-popover-lead {
+    margin: 0;
+    font-weight: 500;
   }
   .row-err-retry {
     flex-shrink: 0;
