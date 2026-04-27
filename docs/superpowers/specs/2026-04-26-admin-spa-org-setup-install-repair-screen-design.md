@@ -102,10 +102,9 @@ When the next step is **outside** the SPA (user completing a form on GitHub), **
 
 ## GitHub interrupts and staging
 
-Unchanged from [`2026-04-06-fullsend-admin-spa-design.md`](2026-04-06-fullsend-admin-spa-design.md):
-
 - Leaving the SPA for **github.com** is **expected** for app groups.
-- **Staging** of intermediate app material may use **`localStorage`** on the current origin; clear on success, cancel, sign-out, or documented abandon behavior; never put secrets in URLs or logs.
+- **Staging** of intermediate app and dispatch material may use **`localStorage`** on the current origin; never put secrets in URLs or logs.
+- **Normative rules** for which keys persist (including **across sign-out** for partial installs), when to clear staging, and how **heuristic app slugs** interact with GitHub APIs are defined in the sibling spec [`2026-04-27-admin-spa-org-setup-install-repair-fsm.md`](2026-04-27-admin-spa-org-setup-install-repair-fsm.md) (**Browser `localStorage` keys**, **Installation vs GitHub App existence**). Where that policy differs from the generic wizard staging note in [`2026-04-06-fullsend-admin-spa-design.md`](2026-04-06-fullsend-admin-spa-design.md), **this route follows the sibling spec** for the `fullsend:setup:*` namespace.
 
 ## Relation to companion “final review”
 

@@ -57,7 +57,15 @@ Use one token per row in **Table A → Status icon** (map to visuals in implemen
 
 **Risk acceptance:** **PEM** and **PAT** material may live in `localStorage` only for a **short window** until written to the correct GitHub destinations (repo secrets / org secret). **XSS or local compromise** can read them; this is an **accepted trade-off** for v1 and must be stated in any user-facing security copy when implemented.
 
-**Clear staging** when: `.fullsend` holds the authoritative secret, user signs out, or a documented **abandon** action runs (align with parent spec’s staging story).
+**Persistence across sign-out:** Material under this key scheme **must not** be cleared merely because the user **signs out** of the admin SPA. Partial installs (GitHub App created, PEM only on disk; PAT only in staging; `.fullsend` not written yet) must **survive** until the user returns with the **same** GitHub login on the **same** browser profile, so we do not “forget” apps the user already created. Keys already include **SCM host** + **GitHub login** + **org**, so a **different** user on the same machine does not read another user’s staging.
+
+**Clear staging** when (any of):
+
+- The **authoritative** copy exists on GitHub for that artifact (e.g. repo secret / org secret written and confirmed), **and** the implementation chooses to drop local duplicates; or
+- The user runs a documented **abandon** / **clear setup data for this org** action (product-defined); or
+- The user completes **cancel** flows that explicitly promise to discard staging (if offered).
+
+**Do not** clear install staging on routine **sign-out**. (OAuth **session** tokens may still be cleared on sign-out per broader admin SPA security; that is separate from the `fullsend:setup:*` namespace.)
 
 ### App identity resolution
 
@@ -67,14 +75,31 @@ For each configured **role**, resolve **display name** and **slug** in order:
 2. **`localStorage`** metadata for `{host, user, org, role}`.
 3. **Heuristic:** default slug `{org_login}-{role}` (and display name derived in product copy).
 
-Installation checks use the **resolved slug** (or installation id if implementation prefers) against org installation listings from the API.
+### Installation vs GitHub App existence (API reality)
+
+These are **different** signals; the FSM must not conflate them.
+
+| Signal | Typical API | What it proves |
+|--------|-------------|----------------|
+| **Installed on the organisation** | e.g. `GET /orgs/{org}/installations` (as in `internal/forge/github` today) | The app is **installed** on that org (appears in the installation list with `app_slug`). |
+| **App exists (slug registered)** | GitHub REST **`GET /apps/{app_slug}`** | A GitHub App with that slug **exists** (may still be **uninstalled** on the org). |
+
+**Heuristic slug alone** does **not** prove the app exists: it is only a **naming convention** until confirmed by **`localStorage` / config**, by **org installations** (if listed), or by a **slug probe**.
+
+**Slug probe:** After resolving a candidate slug (from config, `localStorage`, or heuristic), the SPA (or Worker) **should** call **`GET /apps/{app_slug}`** to distinguish **“no app yet”** (`404`) from **“app exists, install pending”** (`200`, installation still missing). Use the same GitHub credentials the SPA already uses for org-scoped reads; send **`Accept: application/vnd.github+json`**.
+
+**Visibility caveats:** GitHub may return **`403`** for some apps (visibility / permissions) even when the slug exists. Treat **`403`** as **inconclusive**: do not assume “no app”; prefer subtitle copy such as “Could not confirm app visibility; open GitHub or continue from your saved progress,” and/or retry when the user is authenticated. **`404`** ⇒ treat as **no app** for that slug for **heuristic** paths.
+
+**Rethink avoided:** We **do not** need to drop the heuristic for naming; we **do** need the **slug probe** (or equivalent) whenever the slug comes from the heuristic **and** org installations do not yet list the app—otherwise the UI cannot tell **create** vs **install** apart.
+
+Installation checks continue to use **resolved slug** against **org installations** (and optionally installation id).
 
 ### Dispatch token “exists”
 
 For **Table C** and health: token material is **present** if **either**:
 
 - Org secret **`FULLSEND_DISPATCH_TOKEN`** exists on GitHub for this org, **or**
-- **`localStorage`** holds the PAT string under the key scheme above (until cleared after successful org write).
+- **`localStorage`** holds the PAT string under the key scheme above (persists across sign-out like app PEMs; clear only per [Clear staging](#browser-localstorage-keys-staging) or after optional post-write cleanup).
 
 **No verification** step in v1 (see Non-goals).
 
@@ -191,8 +216,8 @@ When `fullsend_repo_setup` is blocked, the **subtitle** (and optional second lin
 
 | Item ID | Label template | Sub-states | Icon per sub-state | How we know | Copy when missing / error |
 |---------|----------------|------------|----------------------|-------------|---------------------------|
-| `item_app_name` | App name: `{display_name}` | `ok`, `unknown`, `heuristic` | `ok`→ok, `unknown`→unknown, `heuristic`→warn | `config` → `localStorage` → `{org}-{role}` heuristic | “Name not confirmed until you create the app or open the configuration repository.” |
-| `item_app_install` | Installed on **{org_login}** | `ok`, `missing`, `in_progress` | `ok`→ok, `missing`→warn, `in_progress`→in_progress | GitHub **List org installations** (or equivalent) vs resolved slug | “Install the app on this organisation to continue.” |
+| `item_app_name` | App name: `{display_name}` | `ok`, `unknown`, `heuristic` | `ok`→ok, `unknown`→unknown, `heuristic`→warn | `config` → `localStorage` → `{org}-{role}` heuristic; if slug is heuristic-only, **confirm with `GET /apps/{slug}`** (see [Installation vs GitHub App existence](#installation-vs-github-app-existence-api-reality)) | “Name not confirmed until you create the app, confirm the slug on GitHub, or open the configuration repository.” |
+| `item_app_install` | Installed on **{org_login}** | `ok`, `missing`, `in_progress` | `ok`→ok, `missing`→warn, `in_progress`→in_progress | **`GET /orgs/{org}/installations`** (or equivalent): slug must appear in that list — **not** implied by `GET /apps/{slug}` alone | “Install the app on this organisation to continue.” |
 
 ---
 
@@ -280,6 +305,8 @@ When `fullsend_repo_setup` is blocked, the **subtitle** (and optional second lin
 - [ ] **No** PAT verify path in v1.
 - [ ] **No** enrollment rows on this screen.
 - [ ] `localStorage` keys include **SCM host**, **GitHub login**, **org login**, and **artifact**.
+- [ ] Install staging **not** cleared on sign-out; clear only per documented rules.
+- [ ] Heuristic slug paths use **`GET /apps/{slug}`** (or equivalent) before choosing **Create** vs **Install** primary.
 - [ ] **Primary omitted** when `—`; icon + subtitle + items still inform.
 - [ ] **`.fullsend` repository setup** naming used in product copy; parent spec’s “automation group” wording maps here for **this** matrix.
 
@@ -291,3 +318,4 @@ When `fullsend_repo_setup` is blocked, the **subtitle** (and optional second lin
 - **Replace token / replace app** flows.
 - **Dispatch verification** location and trigger when added back.
 - **Default branch** for future PAT verify (Go CLI hardcodes `main` today).
+- **`GET /apps/{slug}`** behaviour on GHES / private-app visibility (beyond `403` inconclusive handling).
