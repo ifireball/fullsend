@@ -2,7 +2,7 @@
 
 Date: 2026-04-26  
 Status: Draft  
-Related: [`2026-04-21-fullsend-admin-spa-ux-design.md`](2026-04-21-fullsend-admin-spa-ux-design.md) (entry points; wizard interiors deferred), [`2026-04-06-fullsend-admin-spa-design.md`](2026-04-06-fullsend-admin-spa-design.md) Section 4 (wizards, staging, parity)
+Related: [`2026-04-21-fullsend-admin-spa-ux-design.md`](2026-04-21-fullsend-admin-spa-ux-design.md) (entry points; wizard interiors deferred), [`2026-04-06-fullsend-admin-spa-design.md`](2026-04-06-fullsend-admin-spa-design.md) Section 4 (wizards, staging, parity), [`2026-04-27-admin-spa-org-setup-install-repair-fsm.md`](2026-04-27-admin-spa-org-setup-install-repair-fsm.md) (normative group matrix, FSM tables, `localStorage` staging — **sibling spec**)
 
 ## Purpose
 
@@ -10,13 +10,15 @@ Specify the **interior** of the org-level **install and repair** experience for 
 
 This document **does not** prescribe exact API contracts or Worker behavior; it constrains **UX structure** and **behavioral expectations** so implementation can diverge from CLI **step order** while staying aligned with **real prerequisites** between operations.
 
+For **normative group IDs**, **three-table FSM** per group, **`.fullsend` repository setup** naming (replacing the illustrative “automation” bundle for that matrix), **dispatch token** rules, **`localStorage`** key shape, and **exclusion of enrollment** from this screen, see the sibling spec [`2026-04-27-admin-spa-org-setup-install-repair-fsm.md`](2026-04-27-admin-spa-org-setup-install-repair-fsm.md). This document’s “automation group” language maps to **`.fullsend` repository setup** there; enrollment remains out of scope for the org setup route per the sibling spec.
+
 ## Goals
 
 - One **screen** (one primary route) for **install** and **repair**, not a linear wizard, unless a future iteration explicitly reintroduces stepped navigation.
 - **Flat** layout: prefer **visible** content over deep progressive disclosure; optional collapse of **fully healthy** groups is an implementation later enhancement, not required for v1.
 - **Grouping by interaction need:**
   - Each surface that **requires the user to complete work on github.com** (for example **one group per agent GitHub App** that is created or re-linked via GitHub’s UI) is its **own** group.
-  - Operations the SPA can perform **without** that mandatory GitHub form hop are **one shared “automation” group** (config repo content, workflows, secrets via GitHub APIs, enrollment/dispatch fixes—exact membership follows implementation and parity with the Go layer stack).
+  - Operations the SPA can perform **without** that mandatory GitHub form hop are **one shared “automation” group** (by default: **`.fullsend` repository setup** — config repo, workflows, secrets, org dispatch secret; **enrollment is excluded** from this route per sibling spec [`2026-04-27-admin-spa-org-setup-install-repair-fsm.md`](2026-04-27-admin-spa-org-setup-install-repair-fsm.md)).
 - **One primary action per group** (Install / Repair / Continue / Open GitHub—wording per group state). Sub-items show **status**; they do **not** each get a competing primary **Apply**.
 - **Dependency gating:** if a group cannot run until others are satisfied, the group is **visually inactive** and its primary control is **disabled**. **Prerequisite copy is always visible** as a **muted line directly under the group title** (not on the button—button labels stay short). Example: “Complete **{prior group title}** first.” **No separate hover-only** requirement for that message when this visible hint is present (keyboard and screen-reader users read the same text).
 - **No extra confirmation step** for the automation group’s primary action beyond what is already shown in the group (**detail lines, status indicators, and `wouldFix`-style summaries**). Users act from **informed consent on-screen**, not a modal **Confirm**.
