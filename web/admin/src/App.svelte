@@ -18,10 +18,12 @@
     clearSigningInBrowserState,
     completeGithubOAuthFromHandoff,
     consumeIntendedHashAfterGithubOAuth,
+    consumeManifestParamsFromDocumentUrl,
     consumeOAuthParamsFromDocumentUrl,
     SIGNING_IN_CANCELLED_MESSAGE,
     startGithubSignIn,
   } from "./lib/auth/oauth";
+  import { completeManifestHandoffFromDoc } from "./lib/actions/agentAppManifest";
   import { navOrgContext } from "./lib/shell/navOrgContext";
 
   const routes = {
@@ -73,6 +75,13 @@
 
     void (async () => {
       try {
+        if (consumeManifestParamsFromDocumentUrl()) {
+          await completeManifestHandoffFromDoc(signal);
+          if (signal.aborted) return;
+          /* Same cold-load as any return: githubUser is only hydrated by refreshSession (OAuth does this inside token exchange). */
+          await refreshSession();
+          return;
+        }
         const hadOAuthReturn = consumeOAuthParamsFromDocumentUrl();
         if (hadOAuthReturn) {
           const result = await completeGithubOAuthFromHandoff({ signal });

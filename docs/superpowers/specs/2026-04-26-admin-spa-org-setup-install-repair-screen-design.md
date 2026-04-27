@@ -1,7 +1,7 @@
 # Design: Admin SPA org install / repair (single flat screen)
 
-Date: 2026-04-26  
-Status: Draft  
+Date: 2026-04-26
+Status: Draft
 Related: [`2026-04-21-fullsend-admin-spa-ux-design.md`](2026-04-21-fullsend-admin-spa-ux-design.md) (entry points; wizard interiors deferred), [`2026-04-06-fullsend-admin-spa-design.md`](2026-04-06-fullsend-admin-spa-design.md) Section 4 (wizards, staging, parity), [`2026-04-27-admin-spa-org-setup-install-repair-fsm.md`](2026-04-27-admin-spa-org-setup-install-repair-fsm.md) (normative group matrix, FSM tables, `localStorage` staging — **sibling spec**)
 
 ## Purpose

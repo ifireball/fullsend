@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import { get } from "svelte/store";
   import { RequestError } from "@octokit/request-error";
   import { githubUser } from "../lib/auth/session";
   import { setNavOrgContext } from "../lib/shell/navOrgContext";
@@ -24,13 +25,27 @@
     validateOrgConfig,
     type OrgConfigYaml,
   } from "../lib/layers/orgConfigParse";
-  import { mapAnalyzeToGroups } from "../lib/orgSetup/mapAnalyzeToGroups";
+  import {
+    buildOrgSetupGroups,
+    setupBoardTitlesFromAgents,
+  } from "../lib/orgSetup/mapAnalyzeToGroups";
   import type { SetupGroupViewModel } from "../lib/orgSetup/types";
+  import {
+    githubAppInstallationsNewUrl,
+    submitAgentAppManifestSameWindow,
+  } from "../lib/actions/agentAppManifest";
+  import {
+    getGithubAppManifestRedirectUri,
+    MANIFEST_POST_RESULT_KEY,
+    stashManifestReturnContext,
+  } from "../lib/auth/oauth";
 
   let { params = { org: "" } }: { params?: { org?: string } } = $props();
   const org = $derived(decodeURIComponent((params?.org ?? "").trim()));
 
   let loadGen = 0;
+  /** Nested recheck calls; spinner clears when the last one finishes. */
+  let recheckBusy = 0;
   let loadAbort: AbortController | null = null;
 
   let pageError = $state<string | null>(null);
@@ -40,19 +55,26 @@
   let parsedConfig = $state<OrgConfigYaml | null>(null);
   let configValidateError = $state<string | null>(null);
   let analyzeError = $state<string | null>(null);
+  /** From manifest handoff when conversion fails. */
+  let manifestFlowError = $state<string | null>(null);
   let analyzePending = $state(true);
+  /** Card titles while `analyzePending` (set once agents list is known). */
+  let pendingBoardTitles = $state<string[]>([]);
   let groups = $state<SetupGroupViewModel[]>([]);
   /** Drives nav bar "Deploy" vs "Repair" cluster after org; set after config-repo probe. */
   let setupFlow = $state<"deploy" | "repair" | null>(null);
   /** True when config-repo layer is not installed (org list would branch to Deploy). */
   let greenfieldDeploy = $state(false);
+  /** True while a lightweight refresh (re-run analyse + setup groups) is in flight. */
+  let recheckInstallsPending = $state(false);
 
+  /** Per FSM: one card per agent role + dispatch token + .fullsend setup. */
   const placeholderCardCount = $derived(
     parsedConfig
-      ? Math.max(1, agentsFromConfig(parsedConfig).length + 1)
+      ? Math.max(3, agentsFromConfig(parsedConfig).length + 2)
       : greenfieldDeploy
-        ? DEFAULT_FULLSEND_ORG_AGENT_ROLES.length + 1
-        : 2,
+        ? DEFAULT_FULLSEND_ORG_AGENT_ROLES.length + 2
+        : 5,
   );
 
   function orgGravatarFallback(login: string): string {
@@ -68,7 +90,27 @@
     pageError = null;
     configValidateError = null;
     analyzeError = null;
+    try {
+      const raw = sessionStorage.getItem(MANIFEST_POST_RESULT_KEY);
+      if (raw) {
+        sessionStorage.removeItem(MANIFEST_POST_RESULT_KEY);
+        const o = JSON.parse(raw) as {
+          ok?: unknown;
+          installUrl?: unknown;
+          slug?: unknown;
+          message?: unknown;
+        };
+        if (o.ok === true && typeof o.installUrl === "string" && typeof o.slug === "string") {
+          manifestFlowError = null;
+        } else if (o.ok === false && typeof o.message === "string") {
+          manifestFlowError = o.message;
+        }
+      }
+    } catch {
+      /* ignore */
+    }
     analyzePending = true;
+    pendingBoardTitles = [];
     groups = [];
     setupFlow = null;
     greenfieldDeploy = false;
@@ -125,6 +167,9 @@
     }
 
     parsedConfig = cfg;
+    if (cfg) {
+      pendingBoardTitles = setupBoardTitlesFromAgents(agentsFromConfig(cfg));
+    }
 
     try {
       const configProbe = await analyzeConfigRepoLayer(org, gh);
@@ -138,6 +183,7 @@
         : greenfieldDeploy
           ? defaultFullsendAgentRows()
           : [];
+      pendingBoardTitles = setupBoardTitlesFromAgents(agents);
       const enabledRepos = cfg ? enabledReposFromConfig(cfg) : [];
       const { reports } = await analyzeOrgLayers({
         org,
@@ -152,7 +198,19 @@
       greenfieldDeploy = listDeploy;
       setupFlow = listDeploy ? "deploy" : "repair";
 
-      groups = mapAnalyzeToGroups(reports, agents);
+      const actorLogin = get(githubUser)?.login?.trim() ?? "";
+      const nextGroups = await buildOrgSetupGroups({
+        org,
+        actorLogin: actorLogin || "unknown",
+        octokit,
+        gh,
+        reports,
+        agents,
+        parsedConfig: cfg,
+        greenfieldDeploy: listDeploy,
+      });
+      if (signal.aborted || gen !== loadGen) return;
+      groups = nextGroups;
     } catch (e) {
       if (signal.aborted || gen !== loadGen) return;
       analyzeError =
@@ -163,6 +221,69 @@
     } finally {
       if (!signal.aborted && gen === loadGen) {
         analyzePending = false;
+      }
+    }
+  }
+
+  /**
+   * Re-fetch layer reports and rebuild setup cards (including org app install list).
+   * Used after installing an app in another tab without a full page reload.
+   */
+  async function recheckOrgAppInstalls(): Promise<void> {
+    const token = loadToken()?.accessToken;
+    if (!token || !org || analyzePending) return;
+    const loadSnapshot = loadGen;
+    recheckBusy += 1;
+    recheckInstallsPending = true;
+    analyzeError = null;
+    try {
+      const octokit = createUserOctokit(token);
+      const gh = createLayerGithub(octokit);
+      const cfg = parsedConfig;
+
+      const configProbe = await analyzeConfigRepoLayer(org, gh);
+      if (loadGen !== loadSnapshot) return;
+
+      const listDeployProbe = configRepoIsGreenfieldDeploy(configProbe);
+      const agents = cfg
+        ? agentsFromConfig(cfg)
+        : listDeployProbe
+          ? defaultFullsendAgentRows()
+          : [];
+      const enabledRepos = cfg ? enabledReposFromConfig(cfg) : [];
+      const { reports } = await analyzeOrgLayers({
+        org,
+        gh,
+        agents,
+        enabledRepos,
+      });
+      if (loadGen !== loadSnapshot) return;
+
+      const configReport = reports.find((r) => r.name === "config-repo");
+      const listDeploy = configRepoIsGreenfieldDeploy(configReport);
+      const actorLogin = get(githubUser)?.login?.trim() ?? "";
+      const nextGroups = await buildOrgSetupGroups({
+        org,
+        actorLogin: actorLogin || "unknown",
+        octokit,
+        gh,
+        reports,
+        agents,
+        parsedConfig: cfg,
+        greenfieldDeploy: listDeploy,
+      });
+      if (loadGen !== loadSnapshot) return;
+      groups = nextGroups;
+      greenfieldDeploy = listDeploy;
+      setupFlow = listDeploy ? "deploy" : "repair";
+    } catch (e) {
+      if (loadGen !== loadSnapshot) return;
+      analyzeError =
+        e instanceof Error ? e.message : "Failed to refresh deployment status.";
+    } finally {
+      recheckBusy -= 1;
+      if (recheckBusy === 0) {
+        recheckInstallsPending = false;
       }
     }
   }
@@ -215,12 +336,71 @@
     });
   });
 
+  function roleFromGithubAppGroupId(id: string): string | null {
+    if (!id.startsWith("github_app:")) return null;
+    const role = id.slice("github_app:".length);
+    return role.length > 0 ? role : null;
+  }
+
+  function onGroupPrimaryClick(g: SetupGroupViewModel): void {
+    if (g.kind === "github_app") {
+      const role = roleFromGithubAppGroupId(g.id);
+      if (!role) return;
+      if (g.primary?.label === "Create app on GitHub") {
+        manifestFlowError = null;
+        const actorLogin = get(githubUser)?.login?.trim() ?? "";
+        const h = window.location.hash?.trim();
+        const returnHash =
+          h && h.startsWith("#")
+            ? h
+            : `#/org/${encodeURIComponent(org)}/setup`;
+        stashManifestReturnContext({
+          org,
+          role,
+          actorLogin: actorLogin || "unknown",
+          returnHash,
+        });
+        submitAgentAppManifestSameWindow(org, role, getGithubAppManifestRedirectUri());
+        return;
+      }
+      if (g.primary?.label === "Install app on Organisation" && g.githubAppSlug) {
+        const installUrl = githubAppInstallationsNewUrl(g.githubAppSlug);
+        const win = window.open(installUrl, "_blank");
+        if (win) {
+          try {
+            win.opener = null;
+          } catch {
+            /* ignore */
+          }
+        } else {
+          window.location.assign(installUrl);
+        }
+      }
+      return;
+    }
+    if (g.kind === "dispatch_pat" && g.dispatchPatCreationUrl && g.primary?.label) {
+      window.location.assign(g.dispatchPatCreationUrl);
+      return;
+    }
+    if (g.kind === "fullsend_repo_setup" && g.primary) {
+      /* Apply bundle not wired in SPA yet (FSM `fs_applying`). */
+    }
+  }
+
   onMount(() => {
-    return () => setNavOrgContext(null);
+    return () => {
+      setNavOrgContext(null);
+    };
   });
 
   function prereqId(groupId: string): string {
     return `setup-prereq-${groupId.replace(/[^a-zA-Z0-9_-]/g, "_")}`;
+  }
+
+  function setupLinePopoverId(groupId: string, lineId: string): string {
+    const g = groupId.replace(/[^a-zA-Z0-9_-]/g, "_");
+    const l = lineId.replace(/[^a-zA-Z0-9_-]/g, "_");
+    return `setup-line-pop-${g}-${l}`;
   }
 </script>
 
@@ -246,21 +426,54 @@
       </div>
     {/if}
 
+    {#if manifestFlowError}
+      <div class="banner banner--err" role="alert">
+        <span class="banner-msg">{manifestFlowError}</span>
+        <button
+          type="button"
+          class="btn banner-retry"
+          onclick={() => {
+            manifestFlowError = null;
+          }}
+        >
+          Dismiss
+        </button>
+      </div>
+    {/if}
+
     <div class="setup-board">
       {#if analyzePending}
-        {#each Array.from({ length: placeholderCardCount }, (_, i) => i) as i (i)}
-          <article class="setup-card setup-card--muted" aria-busy="true">
-            <h2 class="setup-card-title">Checking…</h2>
-            <div class="rollup rollup--loading" role="status" aria-live="polite">
-              <span class="row-spinner-disc" aria-hidden="true"></span>
-              <span>Checking…</span>
-            </div>
-            <ul class="item-lines">
-              <li class="item-line item-line--unknown">Pending…</li>
-            </ul>
-            <button type="button" class="btn" disabled>Loading…</button>
-          </article>
-        {/each}
+        {#if pendingBoardTitles.length > 0}
+          {#each pendingBoardTitles as title (title)}
+            <article class="setup-card setup-card--muted" aria-busy="true">
+              <div class="setup-card-heading">
+                <span class="row-spinner-disc row-spinner-disc--inline" aria-hidden="true"></span>
+                <h2 class="setup-card-title">{title}</h2>
+              </div>
+              <div class="setup-loading" role="status" aria-live="polite">
+                <span>Checking…</span>
+              </div>
+              <ul class="item-lines">
+                <li class="item-line item-line--unknown">Pending…</li>
+              </ul>
+              <button type="button" class="btn" disabled>Loading…</button>
+            </article>
+          {/each}
+        {:else}
+          {#each Array.from({ length: placeholderCardCount }, (_, i) => i) as i (i)}
+            <article class="setup-card setup-card--muted" aria-busy="true">
+              <h2 class="setup-card-title">Checking…</h2>
+              <div class="setup-loading" role="status" aria-live="polite">
+                <span class="row-spinner-disc" aria-hidden="true"></span>
+                <span>Checking…</span>
+              </div>
+              <ul class="item-lines">
+                <li class="item-line item-line--unknown">Pending…</li>
+              </ul>
+              <button type="button" class="btn" disabled>Loading…</button>
+            </article>
+          {/each}
+        {/if}
       {:else}
         {#each groups as g (g.id)}
           {@const hintId = g.prerequisiteHint ? prereqId(g.id) : undefined}
@@ -268,36 +481,95 @@
             class="setup-card"
             class:setup-card--muted={g.prerequisiteHint !== null}
           >
-            <h2 class="setup-card-title">{g.title}</h2>
-            {#if g.prerequisiteHint}
-              <p id={hintId} class="prereq-hint">{g.prerequisiteHint}</p>
-            {/if}
-            <div class="rollup rollup--{g.rollupTone}" role="status">
-              {#if g.rollupTone === "ok"}
+            <div class="setup-card-heading">
+              {#if g.statusIcon === "ok"}
                 <span class="status-dot status-dot--ok" aria-hidden="true"></span>
-              {:else if g.rollupTone === "warn"}
+              {:else if g.statusIcon === "warn"}
                 <span class="status-warn" aria-hidden="true">▲</span>
-              {:else if g.rollupTone === "error"}
+              {:else if g.statusIcon === "error"}
                 <span class="status-warn" aria-hidden="true">!</span>
+              {:else if g.statusIcon === "in_progress"}
+                <span class="row-spinner-disc row-spinner-disc--inline" aria-hidden="true"></span>
               {:else}
                 <span class="rollup-unknown" aria-hidden="true">?</span>
               {/if}
-              <span>{g.rollupHeadline}</span>
+              <h2 class="setup-card-title">{g.title}</h2>
             </div>
+            {#if g.prerequisiteHint}
+              <p id={hintId} class="prereq-hint">{g.prerequisiteHint}</p>
+            {/if}
+            <p class="setup-card-subtitle">{g.subtitle}</p>
             <ul class="item-lines">
-              {#each g.itemLines as line (line)}
-                <li class="item-line">{line}</li>
+              {#each g.itemLines as line (line.id ?? line.label)}
+                <li
+                  class="item-line item-line-row"
+                  class:item-line--ok={line.lineTone === "ok"}
+                  class:item-line--warn={line.lineTone === "warn"}
+                  class:item-line--err={line.lineTone === "error"}
+                  class:item-line--unknown={line.lineTone === "unknown"}
+                >
+                  <div class="item-line-label-group">
+                    <span class="item-line-text">{line.label}</span>
+                    {#if line.trailingAction?.kind === "recheck_org_app_installs"}
+                      {#if recheckInstallsPending}
+                        <span class="item-line-recheck item-line-recheck--pending" aria-live="polite">
+                          Checking…
+                        </span>
+                      {:else}
+                        <button
+                          type="button"
+                          class="item-line-recheck"
+                          onclick={() => void recheckOrgAppInstalls()}
+                        >
+                          {line.trailingAction.label}
+                        </button>
+                      {/if}
+                    {/if}
+                  </div>
+                  {#if line.detail || line.detailLinkHref}
+                    {@const pid = setupLinePopoverId(g.id, line.id ?? "row")}
+                    <button
+                      type="button"
+                      class="info-btn"
+                      popovertarget={pid}
+                      aria-haspopup="dialog"
+                      aria-label="Details for this row"
+                    >
+                      i
+                    </button>
+                    <div id={pid} class="setup-line-popover" popover>
+                      {#if line.detail}
+                        <p class="setup-line-popover-lead">{line.detail}</p>
+                      {/if}
+                      {#if line.detailLinkHref}
+                        <p class="setup-line-popover-link-wrap">
+                          <a
+                            class="setup-line-popover-link"
+                            href={line.detailLinkHref}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                          >
+                            {line.detailLinkLabel ?? line.detailLinkHref}
+                          </a>
+                        </p>
+                      {/if}
+                    </div>
+                  {/if}
+                </li>
               {/each}
             </ul>
-            <button
-              type="button"
-              class="btn"
-              class:btn-primary={g.kind === "automation"}
-              disabled={g.primary.disabled}
-              aria-describedby={g.prerequisiteHint ? hintId : undefined}
-            >
-              {g.primary.label}
-            </button>
+            {#if g.primary}
+              <button
+                type="button"
+                class="btn"
+                class:btn-primary={g.kind === "fullsend_repo_setup"}
+                disabled={g.primary.disabled === true}
+                aria-describedby={g.prerequisiteHint ? hintId : undefined}
+                onclick={() => onGroupPrimaryClick(g)}
+              >
+                {g.primary.label}
+              </button>
+            {/if}
           </article>
         {/each}
       {/if}
@@ -323,6 +595,15 @@
     gap: 1.25rem;
   }
 
+  .setup-loading {
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+    margin: 0 0 0.65rem;
+    font-size: 0.95rem;
+    color: #444;
+  }
+
   .setup-card {
     padding: 1rem 1.1rem;
     border: 1px solid #d0d7de;
@@ -333,39 +614,29 @@
   .setup-card--muted {
     opacity: 0.92;
   }
-  .setup-card-title {
+  .setup-card-heading {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.45rem 0.55rem;
     margin: 0 0 0.35rem;
+  }
+  .setup-card-title {
+    margin: 0;
     font-size: 1rem;
     font-weight: 600;
+  }
+  .setup-card-subtitle {
+    margin: 0 0 0.65rem;
+    font-size: 0.88rem;
+    color: #57606a;
+    line-height: 1.45;
   }
   .prereq-hint {
     margin: 0 0 0.65rem;
     font-size: 0.88rem;
     color: #57606a;
     line-height: 1.45;
-  }
-  .rollup {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 0.45rem 0.6rem;
-    margin: 0 0 0.65rem;
-    font-size: 0.95rem;
-  }
-  .rollup--loading {
-    color: #444;
-  }
-  .rollup--ok {
-    color: #24292f;
-  }
-  .rollup--warn {
-    color: #24292f;
-  }
-  .rollup--error {
-    color: #a40e26;
-  }
-  .rollup--unknown {
-    color: #444;
   }
   .status-dot {
     display: inline-block;
@@ -393,6 +664,9 @@
     border-radius: 50%;
     animation: spin 0.75s linear infinite;
   }
+  .row-spinner-disc--inline {
+    flex-shrink: 0;
+  }
 
   .item-lines {
     margin: 0 0 0.85rem;
@@ -404,8 +678,104 @@
   .item-line {
     margin: 0.25rem 0;
   }
+  .item-line-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.35rem 0.45rem;
+    list-style-position: outside;
+  }
+  .item-line-label-group {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.35rem 0.65rem;
+    flex: 1;
+    min-width: 0;
+  }
+  .item-line-text {
+    min-width: 8rem;
+  }
+  .item-line-recheck {
+    border: none;
+    background: transparent;
+    padding: 0;
+    margin: 0;
+    color: #0969da;
+    cursor: pointer;
+    font: inherit;
+    text-decoration: underline;
+    white-space: nowrap;
+  }
+  .item-line-recheck:hover {
+    color: #0550ae;
+  }
+  .item-line-recheck--pending {
+    color: #57606a;
+    text-decoration: none;
+    cursor: default;
+    font-size: 0.88rem;
+  }
+  .item-line-recheck:focus-visible {
+    outline: 2px solid #0969da;
+    outline-offset: 2px;
+    border-radius: 2px;
+  }
   .item-line--unknown {
     color: #8c959f;
+  }
+  .item-line--ok {
+    color: #1a7f37;
+  }
+  .item-line--warn {
+    color: #9a6700;
+  }
+  .item-line--err {
+    color: #a40e26;
+  }
+
+  .info-btn {
+    box-sizing: border-box;
+    min-width: 1.35rem;
+    height: 1.35rem;
+    padding: 0;
+    border-radius: 999px;
+    border: 1px solid #bf8700;
+    background: #fff8c5;
+    color: #7d4e00;
+    font-size: 0.72rem;
+    font-weight: 700;
+    font-style: italic;
+    cursor: help;
+    line-height: 1;
+    flex-shrink: 0;
+  }
+  .info-btn:focus-visible {
+    outline: 2px solid #0969da;
+    outline-offset: 2px;
+  }
+  .setup-line-popover {
+    max-width: min(22rem, calc(100vw - 2rem));
+    padding: 0.75rem 0.85rem;
+    border: 1px solid #d4a72c;
+    border-radius: 8px;
+    background: #fffef5;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.12);
+    color: #24292f;
+    font-size: 0.85rem;
+    line-height: 1.45;
+  }
+  .setup-line-popover-lead {
+    margin: 0;
+    font-weight: 500;
+  }
+  .setup-line-popover-link-wrap {
+    margin: 0.55rem 0 0;
+  }
+  .setup-line-popover-link {
+    color: #0969da;
+    font-weight: 600;
+    word-break: break-all;
   }
 
   .btn {

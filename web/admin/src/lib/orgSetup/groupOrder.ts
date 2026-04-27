@@ -11,7 +11,15 @@ export type DepEdge = {
 export function groupDisplayTitle(id: string): string {
   if (id === "config_ok") return "Configuration repository";
   if (id === "apps_ready") return "Agent GitHub apps";
-  if (id === "automation") return "Automation";
+  if (id === "automation") return ".fullsend repository setup";
+  if (id === "dispatch_pat" || id === "dispatch_material_ok") {
+    return "Dispatch token";
+  }
+  if (id === "fullsend_repo_setup") return ".fullsend repository setup";
+  if (id.startsWith("github_app_healthy:")) {
+    const role = id.slice("github_app_healthy:".length);
+    return `${humanizeRole(role)} GitHub App`;
+  }
   if (id.startsWith("github_app:")) {
     const role = id.slice("github_app:".length);
     return `${humanizeRole(role)} GitHub App`;

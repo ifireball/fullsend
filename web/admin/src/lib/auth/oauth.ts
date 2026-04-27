@@ -6,6 +6,14 @@ import { clearSession, saveToken } from "./tokenStore";
 const PKCE_VERIFIER_KEY = "fullsend_admin_pkce_verifier";
 const OAUTH_STATE_KEY = "fullsend_admin_oauth_state";
 const OAUTH_DOC_HANDOFF_KEY = "fullsend_admin_oauth_doc_handoff";
+/** One-shot manifest `code` after `consumeManifestParamsFromDocumentUrl` (same pattern as OAuth doc handoff). */
+const MANIFEST_DOC_HANDOFF_KEY = "fullsend_admin_manifest_doc_handoff";
+/** Stashed before navigating away to POST the GitHub App manifest (same-window flow). */
+const MANIFEST_RETURN_CONTEXT_KEY = "fullsend_admin_manifest_return_ctx";
+/** Read by org setup after manifest exchange (`agentAppManifest.completeManifestHandoffFromDoc`). */
+export const MANIFEST_POST_RESULT_KEY = "fullsend_admin_manifest_post_result";
+/** Query flag on the admin entry URL so manifest return is not mistaken for OAuth (`code` + `state`). */
+export const GITHUB_APP_MANIFEST_RETURN_PARAM = "fullsend_app_manifest";
 /** Hash route to restore after successful OAuth (e.g. `#/orgs`). */
 const INTENDED_HASH_KEY = "fullsend_admin_intended_hash";
 
@@ -20,8 +28,68 @@ export function clearSigningInBrowserState(): void {
   try {
     sessionStorage.removeItem(PKCE_VERIFIER_KEY);
     sessionStorage.removeItem(OAUTH_DOC_HANDOFF_KEY);
+    sessionStorage.removeItem(MANIFEST_DOC_HANDOFF_KEY);
+    sessionStorage.removeItem(MANIFEST_RETURN_CONTEXT_KEY);
+    sessionStorage.removeItem(MANIFEST_POST_RESULT_KEY);
   } catch {
     /* ignore */
+  }
+}
+
+export type ManifestReturnContext = {
+  org: string;
+  role: string;
+  actorLogin: string;
+  returnHash: string;
+};
+
+export function stashManifestReturnContext(ctx: ManifestReturnContext): void {
+  try {
+    sessionStorage.setItem(MANIFEST_RETURN_CONTEXT_KEY, JSON.stringify(ctx));
+  } catch {
+    /* ignore */
+  }
+}
+
+/** Hash to restore after manifest return URL cleanup (does not consume context). */
+export function peekManifestReturnHash(): string {
+  try {
+    const raw = sessionStorage.getItem(MANIFEST_RETURN_CONTEXT_KEY);
+    if (!raw) return "#/";
+    const o = JSON.parse(raw) as unknown;
+    if (!o || typeof o !== "object") return "#/";
+    const h = (o as { returnHash?: unknown }).returnHash;
+    if (typeof h !== "string") return "#/";
+    const t = h.trim();
+    return t.startsWith("#") && t.length > 0 ? t : "#/";
+  } catch {
+    return "#/";
+  }
+}
+
+export function takeManifestReturnContext(): ManifestReturnContext | null {
+  try {
+    const raw = sessionStorage.getItem(MANIFEST_RETURN_CONTEXT_KEY);
+    sessionStorage.removeItem(MANIFEST_RETURN_CONTEXT_KEY);
+    if (!raw) return null;
+    const o = JSON.parse(raw) as unknown;
+    if (!o || typeof o !== "object") return null;
+    const rec = o as Record<string, unknown>;
+    const org = typeof rec.org === "string" ? rec.org.trim() : "";
+    const role = typeof rec.role === "string" ? rec.role.trim() : "";
+    const actorLogin =
+      typeof rec.actorLogin === "string" ? rec.actorLogin.trim() : "";
+    const returnHash =
+      typeof rec.returnHash === "string" ? rec.returnHash.trim() : "";
+    if (!org || !role) return null;
+    return {
+      org,
+      role,
+      actorLogin: actorLogin || "unknown",
+      returnHash: returnHash.startsWith("#") ? returnHash : "#/",
+    };
+  } catch {
+    return null;
   }
 }
 
@@ -46,6 +114,53 @@ function adminAppBasePath(): string {
  */
 export function getOAuthRedirectUri(): string {
   return new URL(adminAppBasePath(), window.location.origin).href;
+}
+
+/**
+ * Same admin document entry as OAuth, plus a query marker so GitHub App manifest
+ * redirects are handled separately from OAuth returns (both use `code=`).
+ */
+export function getGithubAppManifestRedirectUri(): string {
+  const u = new URL(getOAuthRedirectUri());
+  u.searchParams.set(GITHUB_APP_MANIFEST_RETURN_PARAM, "1");
+  return u.href;
+}
+
+/**
+ * If the document URL is a GitHub App manifest return (`fullsend_app_manifest=1` + `code`),
+ * stash `{ code }` and strip query (like OAuth). Run **before** {@link consumeOAuthParamsFromDocumentUrl}.
+ */
+export function consumeManifestParamsFromDocumentUrl(): boolean {
+  const sp = new URLSearchParams(window.location.search);
+  if (sp.get(GITHUB_APP_MANIFEST_RETURN_PARAM) !== "1" || !sp.has("code")) {
+    return false;
+  }
+  const code = sp.get("code")?.trim() ?? "";
+  if (!code) return false;
+
+  sessionStorage.setItem(MANIFEST_DOC_HANDOFF_KEY, JSON.stringify({ code }));
+
+  const clean = new URL(adminAppBasePath(), window.location.origin);
+  clean.search = "";
+  clean.hash = peekManifestReturnHash();
+  history.replaceState(null, "", clean.href);
+  return true;
+}
+
+export function takeManifestDocHandoff(): { code: string } | null {
+  const raw = sessionStorage.getItem(MANIFEST_DOC_HANDOFF_KEY);
+  sessionStorage.removeItem(MANIFEST_DOC_HANDOFF_KEY);
+  if (!raw) return null;
+  try {
+    const o = JSON.parse(raw) as unknown;
+    if (!o || typeof o !== "object") return null;
+    const rec = o as Record<string, unknown>;
+    const code = typeof rec.code === "string" ? rec.code.trim() : "";
+    if (!code) return null;
+    return { code };
+  } catch {
+    return null;
+  }
 }
 
 type WorkerExpandedOauthState = { v: 1; n: string; k: string };
@@ -149,6 +264,8 @@ export function clearOAuthState(): void {
 export function consumeOAuthParamsFromDocumentUrl(): boolean {
   const sp = new URLSearchParams(window.location.search);
   if (!sp.has("code")) return false;
+  /** Manifest return uses `code` without OAuth `state`; never stash as OAuth. */
+  if (sp.get(GITHUB_APP_MANIFEST_RETURN_PARAM) === "1") return false;
 
   const code = sp.get("code")?.trim() ?? "";
   const state = sp.get("state") ?? "";

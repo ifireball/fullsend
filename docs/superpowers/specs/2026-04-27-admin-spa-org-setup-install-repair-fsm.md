@@ -1,7 +1,7 @@
 # Design: Admin SPA org install / repair — FSM and group matrix (sibling spec)
 
-Date: 2026-04-27  
-Status: Draft  
+Date: 2026-04-27
+Status: Draft
 Related: [`2026-04-26-admin-spa-org-setup-install-repair-screen-design.md`](2026-04-26-admin-spa-org-setup-install-repair-screen-design.md) (flat screen UX, layout, loading patterns), Go install flow (`internal/cli/admin.go`, `internal/appsetup`, `internal/layers`)
 
 ## Purpose

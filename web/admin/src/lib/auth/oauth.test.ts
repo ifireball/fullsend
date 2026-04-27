@@ -13,10 +13,15 @@ import { refreshSession } from "./session";
 import { challengeS256 } from "./pkce";
 import {
   completeGithubOAuthFromHandoff,
+  consumeManifestParamsFromDocumentUrl,
   consumeOAuthParamsFromDocumentUrl,
+  getGithubAppManifestRedirectUri,
   getOAuthRedirectUri,
+  GITHUB_APP_MANIFEST_RETURN_PARAM,
   SIGNING_IN_CANCELLED_MESSAGE,
+  stashManifestReturnContext,
   startGithubSignIn,
+  takeManifestDocHandoff,
   tryParseWorkerExpandedOauthState,
 } from "./oauth";
 import { loadToken } from "./tokenStore";
@@ -42,6 +47,7 @@ function restoreWindowLocation() {
 }
 
 const OAUTH_DOC_HANDOFF_KEY = "fullsend_admin_oauth_doc_handoff";
+const MANIFEST_DOC_HANDOFF_KEY = "fullsend_admin_manifest_doc_handoff";
 const OAUTH_STATE_KEY = "fullsend_admin_oauth_state";
 const PKCE_VERIFIER_KEY = "fullsend_admin_pkce_verifier";
 const INTENDED_HASH_KEY = "fullsend_admin_intended_hash";
@@ -183,6 +189,95 @@ describe("consumeOAuthParamsFromDocumentUrl", () => {
       { code: "", state: "" },
     );
     expect(history.replaceState).toHaveBeenCalledOnce();
+  });
+
+  it("does not stash OAuth handoff when manifest return marker is present", () => {
+    installLocationStub({
+      origin: "https://consume.test",
+      search: `?${GITHUB_APP_MANIFEST_RETURN_PARAM}=1&code=manifest-only`,
+      href: `https://consume.test/admin/?${GITHUB_APP_MANIFEST_RETURN_PARAM}=1&code=manifest-only`,
+      assign: vi.fn(),
+    });
+
+    expect(consumeOAuthParamsFromDocumentUrl()).toBe(false);
+    expect(sessionStorage.getItem(OAUTH_DOC_HANDOFF_KEY)).toBeNull();
+    expect(history.replaceState).not.toHaveBeenCalled();
+  });
+});
+
+describe("consumeManifestParamsFromDocumentUrl", () => {
+  beforeEach(() => {
+    sessionStorage.clear();
+    vi.spyOn(history, "replaceState").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    vi.mocked(history.replaceState).mockRestore();
+    restoreWindowLocation();
+  });
+
+  it("returns false when manifest marker is missing", () => {
+    installLocationStub({
+      origin: "https://consume.test",
+      search: "?code=only",
+      href: "https://consume.test/admin/?code=only",
+      assign: vi.fn(),
+    });
+    expect(consumeManifestParamsFromDocumentUrl()).toBe(false);
+    expect(sessionStorage.getItem(MANIFEST_DOC_HANDOFF_KEY)).toBeNull();
+  });
+
+  it("stashes manifest code, replaces URL, and takeManifestDocHandoff consumes it", () => {
+    stashManifestReturnContext({
+      org: "acme",
+      role: "coder",
+      actorLogin: "alice",
+      returnHash: "#/org/acme/setup",
+    });
+    installLocationStub({
+      origin: "https://consume.test",
+      search: `?${GITHUB_APP_MANIFEST_RETURN_PARAM}=1&code=manifestcode`,
+      href: `https://consume.test/admin/?${GITHUB_APP_MANIFEST_RETURN_PARAM}=1&code=manifestcode`,
+      assign: vi.fn(),
+    });
+
+    expect(consumeManifestParamsFromDocumentUrl()).toBe(true);
+    expect(JSON.parse(sessionStorage.getItem(MANIFEST_DOC_HANDOFF_KEY)!)).toEqual(
+      { code: "manifestcode" },
+    );
+    const expected = new URL("/admin/", "https://consume.test");
+    expected.search = "";
+    expected.hash = "#/org/acme/setup";
+    expect(history.replaceState).toHaveBeenCalledOnce();
+    expect(history.replaceState).toHaveBeenCalledWith(
+      null,
+      "",
+      expected.href,
+    );
+
+    expect(takeManifestDocHandoff()).toEqual({ code: "manifestcode" });
+    expect(sessionStorage.getItem(MANIFEST_DOC_HANDOFF_KEY)).toBeNull();
+  });
+});
+
+describe("getGithubAppManifestRedirectUri", () => {
+  afterEach(() => {
+    restoreWindowLocation();
+  });
+
+  it("is OAuth redirect URI plus manifest query marker", () => {
+    installLocationStub({
+      origin: "https://oauth-start.test",
+      search: "",
+      hash: "#/orgs",
+      href: "https://oauth-start.test/admin/#/orgs",
+      assign: vi.fn(),
+    });
+    const oauthUri = getOAuthRedirectUri();
+    const manifestUri = getGithubAppManifestRedirectUri();
+    expect(manifestUri.startsWith(oauthUri.split("?")[0]!)).toBe(true);
+    const u = new URL(manifestUri);
+    expect(u.searchParams.get(GITHUB_APP_MANIFEST_RETURN_PARAM)).toBe("1");
   });
 });
 
