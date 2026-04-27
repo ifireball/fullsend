@@ -1,14 +1,15 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"os"
 	"strings"
 
 	"github.com/spf13/cobra"
 
+	"github.com/fullsend-ai/fullsend/internal/forge"
 	gh "github.com/fullsend-ai/fullsend/internal/forge/github"
 	"github.com/fullsend-ai/fullsend/internal/sticky"
 	"github.com/fullsend-ai/fullsend/internal/ui"
@@ -53,12 +54,15 @@ or reads from stdin if set to "-".`,
 			}
 			owner, repoName := parts[0], parts[1]
 
-			raw, err := readReviewBody(result)
+			raw, err := readBody(result)
 			if err != nil {
 				return fmt.Errorf("reading review body: %w", err)
 			}
 
-			parsed := parseReviewResult(raw)
+			parsed, err := parseReviewResult(raw)
+			if err != nil {
+				return fmt.Errorf("parsing review result: %w", err)
+			}
 
 			printer.Header("Post Review")
 
@@ -67,7 +71,11 @@ or reads from stdin if set to "-".`,
 				Marker: reviewMarker,
 				DryRun: dryRun,
 			}
-			return sticky.Post(cmd.Context(), client, owner, repoName, pr, parsed.Body, cfg, printer)
+			if err := sticky.Post(cmd.Context(), client, owner, repoName, pr, parsed.Body, cfg, printer); err != nil {
+				return err
+			}
+
+			return submitFormalReview(cmd.Context(), client, owner, repoName, pr, parsed, dryRun, printer)
 		},
 	}
 
@@ -82,41 +90,106 @@ or reads from stdin if set to "-".`,
 	return cmd
 }
 
-// readReviewBody reads the review body from a file path or stdin.
-func readReviewBody(path string) (string, error) {
-	if path == "-" {
-		data, err := io.ReadAll(os.Stdin)
-		if err != nil {
-			return "", fmt.Errorf("reading stdin: %w", err)
-		}
-		return string(data), nil
-	}
-
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return "", err
-	}
-	return string(data), nil
-}
-
 // ReviewResult represents a parsed review result file.
 type ReviewResult struct {
 	Body   string `json:"body"`
 	Action string `json:"action"` // "approve", "request-changes", "comment"
 }
 
+// reviewActionToEvent maps a ReviewResult action to a GitHub PR review event.
+func reviewActionToEvent(action string) (string, bool) {
+	switch strings.ToLower(action) {
+	case "approve":
+		return "APPROVE", true
+	case "request-changes", "request_changes":
+		return "REQUEST_CHANGES", true
+	case "comment":
+		return "COMMENT", true
+	default:
+		return "", false
+	}
+}
+
+// submitFormalReview submits a GitHub PR review and minimizes stale reviews
+// by the same user.
+func submitFormalReview(ctx context.Context, client forge.Client, owner, repo string, pr int, parsed ReviewResult, dryRun bool, printer *ui.Printer) error {
+	event, ok := reviewActionToEvent(parsed.Action)
+	if !ok {
+		printer.StepInfo(fmt.Sprintf("Unknown review action %q, skipping formal review", parsed.Action))
+		return nil
+	}
+
+	if dryRun {
+		printer.StepInfo(fmt.Sprintf("Dry run — would submit %s review", event))
+		return nil
+	}
+
+	printer.StepStart(fmt.Sprintf("Submitting %s review", event))
+
+	reviewBody := "See the review comment above for full details."
+	if err := client.CreatePullRequestReview(ctx, owner, repo, pr, event, reviewBody); err != nil {
+		return fmt.Errorf("submitting review: %w", err)
+	}
+	printer.StepDone("Review submitted")
+
+	return minimizeStaleReviews(ctx, client, owner, repo, pr, printer)
+}
+
+// minimizeStaleReviews lists all reviews on the PR, finds previous reviews
+// by the authenticated user, and minimizes them to reduce noise.
+func minimizeStaleReviews(ctx context.Context, client forge.Client, owner, repo string, pr int, printer *ui.Printer) error {
+	user, err := client.GetAuthenticatedUser(ctx)
+	if err != nil {
+		printer.StepInfo("Could not determine authenticated user, skipping stale review cleanup")
+		return nil
+	}
+
+	reviews, err := client.ListPullRequestReviews(ctx, owner, repo, pr)
+	if err != nil {
+		printer.StepInfo("Could not list reviews, skipping stale review cleanup")
+		return nil
+	}
+
+	// The most recent review is the one we just posted — skip it.
+	// Minimize all other reviews by the same user.
+	var stale []forge.PullRequestReview
+	for _, r := range reviews {
+		if r.User == user {
+			stale = append(stale, r)
+		}
+	}
+
+	if len(stale) <= 1 {
+		return nil
+	}
+
+	// Skip the last one (most recent = the one we just created).
+	stale = stale[:len(stale)-1]
+
+	printer.StepStart(fmt.Sprintf("Minimizing %d stale review(s)", len(stale)))
+	for _, r := range stale {
+		if err := client.MinimizeComment(ctx, owner, repo, r.ID, "OUTDATED"); err != nil {
+			printer.StepInfo(fmt.Sprintf("Warning: could not minimize review %d: %v", r.ID, err))
+		}
+	}
+	printer.StepDone("Stale reviews minimized")
+
+	return nil
+}
+
 // parseReviewResult attempts to parse the body as a JSON ReviewResult.
 // If parsing fails, treats the entire input as a plain-text body.
-func parseReviewResult(input string) ReviewResult {
+// Returns an error if the JSON is valid but the body field is empty.
+func parseReviewResult(input string) (ReviewResult, error) {
 	var result ReviewResult
 	if err := json.Unmarshal([]byte(input), &result); err != nil {
-		return ReviewResult{Body: input, Action: "comment"}
+		return ReviewResult{Body: input, Action: "comment"}, nil
 	}
 	if result.Body == "" {
-		result.Body = input
+		return ReviewResult{}, fmt.Errorf("review result JSON has empty body field")
 	}
 	if result.Action == "" {
 		result.Action = "comment"
 	}
-	return result
+	return result, nil
 }

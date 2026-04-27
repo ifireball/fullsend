@@ -63,6 +63,15 @@ type IssueComment struct {
 	CreatedAt string
 }
 
+// PullRequestReview represents a formal review on a pull request.
+type PullRequestReview struct {
+	ID        int
+	User      string
+	State     string // "APPROVED", "CHANGES_REQUESTED", "COMMENTED", "DISMISSED"
+	Body      string
+	SubmittedAt string
+}
+
 // Installation represents an app installation on an org.
 type Installation struct {
 	ID          int
@@ -136,6 +145,10 @@ type Client interface {
 	CreateIssueComment(ctx context.Context, owner, repo string, number int, body string) (*IssueComment, error)
 	UpdateIssueComment(ctx context.Context, owner, repo string, commentID int, body string) error
 	MinimizeComment(ctx context.Context, owner, repo string, commentID int, reason string) error
+
+	// Pull request review operations
+	CreatePullRequestReview(ctx context.Context, owner, repo string, number int, event, body string) error
+	ListPullRequestReviews(ctx context.Context, owner, repo string, number int) ([]PullRequestReview, error)
 
 	// Change proposal merge
 	MergeChangeProposal(ctx context.Context, owner, repo string, number int) error

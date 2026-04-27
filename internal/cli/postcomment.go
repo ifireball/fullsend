@@ -2,7 +2,6 @@ package cli
 
 import (
 	"fmt"
-	"io"
 	"os"
 	"strings"
 
@@ -52,7 +51,7 @@ The --result flag accepts a file path or "-" for stdin.`,
 			}
 			owner, repoName := parts[0], parts[1]
 
-			body, err := readCommentBody(result)
+			body, err := readBody(result)
 			if err != nil {
 				return fmt.Errorf("reading comment body: %w", err)
 			}
@@ -79,20 +78,4 @@ The --result flag accepts a file path or "-" for stdin.`,
 	_ = cmd.MarkFlagRequired("marker")
 
 	return cmd
-}
-
-func readCommentBody(path string) (string, error) {
-	if path == "-" {
-		data, err := io.ReadAll(os.Stdin)
-		if err != nil {
-			return "", fmt.Errorf("reading stdin: %w", err)
-		}
-		return string(data), nil
-	}
-
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return "", err
-	}
-	return string(data), nil
 }

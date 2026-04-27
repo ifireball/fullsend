@@ -1080,6 +1080,60 @@ func (c *LiveClient) MinimizeComment(ctx context.Context, owner, repo string, co
 	return nil
 }
 
+// CreatePullRequestReview submits a formal review on a pull request.
+// The event must be one of: APPROVE, REQUEST_CHANGES, COMMENT.
+func (c *LiveClient) CreatePullRequestReview(ctx context.Context, owner, repo string, number int, event, body string) error {
+	payload := map[string]string{
+		"event": event,
+		"body":  body,
+	}
+	resp, err := c.post(ctx, fmt.Sprintf("/repos/%s/%s/pulls/%d/reviews", owner, repo, number), payload)
+	if err != nil {
+		return fmt.Errorf("create pull request review on #%d: %w", number, err)
+	}
+	resp.Body.Close()
+	return nil
+}
+
+// ListPullRequestReviews returns all reviews on a pull request, paginating automatically.
+func (c *LiveClient) ListPullRequestReviews(ctx context.Context, owner, repo string, number int) ([]forge.PullRequestReview, error) {
+	var result []forge.PullRequestReview
+
+	for page := 1; page <= 100; page++ {
+		resp, err := c.get(ctx, fmt.Sprintf("/repos/%s/%s/pulls/%d/reviews?per_page=100&page=%d", owner, repo, number, page))
+		if err != nil {
+			return nil, fmt.Errorf("list pull request reviews page %d: %w", page, err)
+		}
+		var raw []struct {
+			ID   int    `json:"id"`
+			User struct {
+				Login string `json:"login"`
+			} `json:"user"`
+			State       string `json:"state"`
+			Body        string `json:"body"`
+			SubmittedAt string `json:"submitted_at"`
+		}
+		if err := decodeJSON(resp, &raw); err != nil {
+			return nil, fmt.Errorf("decoding pull request reviews page %d: %w", page, err)
+		}
+
+		for _, r := range raw {
+			result = append(result, forge.PullRequestReview{
+				ID:          r.ID,
+				User:        r.User.Login,
+				State:       r.State,
+				Body:        r.Body,
+				SubmittedAt: r.SubmittedAt,
+			})
+		}
+
+		if len(raw) < 100 {
+			break
+		}
+	}
+	return result, nil
+}
+
 // MergeChangeProposal squash-merges a pull request by number.
 func (c *LiveClient) MergeChangeProposal(ctx context.Context, owner, repo string, number int) error {
 	resp, err := c.put(ctx, fmt.Sprintf("/repos/%s/%s/pulls/%d/merge", owner, repo, number), map[string]string{"merge_method": "squash"})

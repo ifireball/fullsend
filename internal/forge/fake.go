@@ -56,6 +56,13 @@ type MinimizedCommentRecord struct {
 	Reason      string
 }
 
+// ReviewRecord records a pull request review creation call.
+type ReviewRecord struct {
+	Owner, Repo string
+	Number      int
+	Event, Body string
+}
+
 // FakeClient is a thread-safe test double for forge.Client.
 // Pre-populate its fields to control return values, and inspect
 // recorder slices after the test to verify which calls were made.
@@ -86,6 +93,9 @@ type FakeClient struct {
 	// Issue comments for ListIssueComments / UpdateIssueComment.
 	IssueComments map[string][]IssueComment // key: "owner/repo/number"
 
+	// Pull request reviews for ListPullRequestReviews.
+	PRReviews map[string][]PullRequestReview // key: "owner/repo/number"
+
 	// Call recorders
 	CreatedRepos      []Repository
 	CreatedFiles      []FileRecord
@@ -99,6 +109,7 @@ type FakeClient struct {
 	CreatedOrgSecrets []OrgSecretRecord
 	UpdatedComments   []UpdatedCommentRecord
 	MinimizedComments []MinimizedCommentRecord
+	CreatedReviews    []ReviewRecord
 
 	// internal counter for change proposal numbers
 	proposalCounter int
@@ -603,6 +614,37 @@ func (f *FakeClient) MinimizeComment(_ context.Context, owner, repo string, comm
 		Reason:    reason,
 	})
 	return nil
+}
+
+func (f *FakeClient) CreatePullRequestReview(_ context.Context, owner, repo string, number int, event, body string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if e := f.err("CreatePullRequestReview"); e != nil {
+		return e
+	}
+	f.CreatedReviews = append(f.CreatedReviews, ReviewRecord{
+		Owner:  owner,
+		Repo:   repo,
+		Number: number,
+		Event:  event,
+		Body:   body,
+	})
+	return nil
+}
+
+func (f *FakeClient) ListPullRequestReviews(_ context.Context, owner, repo string, number int) ([]PullRequestReview, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if e := f.err("ListPullRequestReviews"); e != nil {
+		return nil, e
+	}
+	if f.PRReviews != nil {
+		key := fmt.Sprintf("%s/%s/%d", owner, repo, number)
+		if reviews, ok := f.PRReviews[key]; ok {
+			return reviews, nil
+		}
+	}
+	return nil, nil
 }
 
 func (f *FakeClient) MergeChangeProposal(_ context.Context, _, _ string, _ int) error {
