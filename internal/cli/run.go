@@ -583,13 +583,21 @@ func bootstrapSandbox(sshConfigPath, sandboxName, repoDir string, h *harness.Har
 	}
 
 	if scanPipeline != nil {
-		if content, err := os.ReadFile(h.Agent); err == nil {
+		content, err := os.ReadFile(h.Agent)
+		if err != nil {
+			if h.FailModeClosed() {
+				return fmt.Errorf("cannot scan agent definition %q: %w", h.Agent, err)
+			}
+			fmt.Fprintf(os.Stderr, "WARNING: could not read agent definition %q for scan: %v\n", h.Agent, err)
+		} else {
 			result := scanPipeline.Scan(string(content))
 			if security.HasCriticalFindings(result.Findings) {
 				if h.FailModeClosed() {
 					return fmt.Errorf("agent definition %q blocked: critical injection findings", h.Agent)
 				}
 				fmt.Fprintf(os.Stderr, "WARNING: agent definition %q has critical injection findings (fail_mode: open)\n", h.Agent)
+			} else if len(result.Findings) > 0 {
+				fmt.Fprintf(os.Stderr, "WARNING: agent definition %q has %d injection finding(s)\n", h.Agent, len(result.Findings))
 			}
 		}
 	}
@@ -605,14 +613,29 @@ func bootstrapSandbox(sshConfigPath, sandboxName, repoDir string, h *harness.Har
 	// agentskills.io specification).
 	for _, skillPath := range h.Skills {
 		if scanPipeline != nil {
-			skillFile := filepath.Join(skillPath, "SKILL.md")
-			if content, err := os.ReadFile(skillFile); err == nil {
-				result := scanPipeline.Scan(string(content))
+			// Try common casings — Linux filesystems are case-sensitive.
+			var skillContent []byte
+			for _, name := range []string{"SKILL.md", "skill.md", "Skill.md"} {
+				if c, err := os.ReadFile(filepath.Join(skillPath, name)); err == nil {
+					skillContent = c
+					break
+				}
+			}
+			if skillContent == nil {
+				// No SKILL.md found in any casing — not an error, skill may
+				// use scripts only. But in fail-closed, warn about unscanned skill.
+				if h.FailModeClosed() {
+					fmt.Fprintf(os.Stderr, "WARNING: skill %q has no SKILL.md to scan\n", skillPath)
+				}
+			} else {
+				result := scanPipeline.Scan(string(skillContent))
 				if security.HasCriticalFindings(result.Findings) {
 					if h.FailModeClosed() {
 						return fmt.Errorf("skill %q blocked: critical injection findings in SKILL.md", skillPath)
 					}
 					fmt.Fprintf(os.Stderr, "WARNING: skill %q has critical injection findings (fail_mode: open)\n", skillPath)
+				} else if len(result.Findings) > 0 {
+					fmt.Fprintf(os.Stderr, "WARNING: skill %q has %d injection finding(s)\n", skillPath, len(result.Findings))
 				}
 			}
 		}
@@ -876,6 +899,14 @@ func buildScanContextCommand(repoDir, traceID string) string {
 	)
 }
 
+func relOrAbs(base, path string) string {
+	rel, err := filepath.Rel(base, path)
+	if err != nil {
+		return path
+	}
+	return rel
+}
+
 // scanRepoContextFiles walks the target repo directory for known context
 // files (CLAUDE.md, AGENTS.md, SKILL.md, etc.) and runs the InputPipeline
 // on each. Returns all findings across scanned files.
@@ -892,7 +923,7 @@ func scanRepoContextFiles(repoDir string) []security.Finding {
 
 	err := filepath.WalkDir(repoDir, func(path string, d os.DirEntry, walkErr error) error {
 		if walkErr != nil {
-			relPath, _ := filepath.Rel(repoDir, path)
+			relPath := relOrAbs(repoDir, path)
 			allFindings = append(allFindings, security.Finding{
 				Scanner:  "context_injection",
 				Name:     "scan_error",
@@ -909,7 +940,8 @@ func scanRepoContextFiles(repoDir string) []security.Finding {
 			if skipDirs[d.Name()] {
 				return filepath.SkipDir
 			}
-			rel, _ := filepath.Rel(repoDir, path)
+			rel := relOrAbs(repoDir, path)
+			// find -maxdepth N allows N levels below start; separator count maps to depth-1.
 			if rel != "." && strings.Count(rel, string(os.PathSeparator)) >= maxContextScanDepth-1 {
 				return filepath.SkipDir
 			}
@@ -921,7 +953,7 @@ func scanRepoContextFiles(repoDir string) []security.Finding {
 		if !security.ShouldScan(d.Name()) {
 			return nil
 		}
-		relPath, _ := filepath.Rel(repoDir, path)
+		relPath := relOrAbs(repoDir, path)
 		info, err := d.Info()
 		if err != nil {
 			allFindings = append(allFindings, security.Finding{
