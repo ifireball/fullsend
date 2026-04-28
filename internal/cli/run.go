@@ -323,8 +323,8 @@ func runAgent(agentName, fullsendDir, outputBase, targetRepo string, printer *ui
 	}
 
 	// 9b. Pre-agent security scan (sandbox-internal, Path B).
-	// Scans context files (CLAUDE.md, AGENTS.md, .cursorrules, agent defs)
-	// that were just copied into the sandbox.
+	// Scans context files (CLAUDE.md, AGENTS.md, .cursorrules, agent defs,
+	// SKILL.md) that were just copied into the sandbox.
 	if h.SecurityEnabled() {
 		printer.StepStart("Running pre-agent security scan")
 		scanCmd := buildScanContextCommand(repoDir, traceID)
@@ -556,6 +556,20 @@ func bootstrapSandbox(sshConfigPath, sandboxName, repoDir string, h *harness.Har
 		return fmt.Errorf("chmod fullsend binary: %w", err)
 	}
 
+	// Host-side scan (Path A): check agent definition for injection before
+	// copying into sandbox. Complements the in-sandbox scan (Path B).
+	if h.SecurityEnabled() {
+		if content, err := os.ReadFile(h.Agent); err == nil {
+			result := security.InputPipeline().Scan(string(content))
+			if security.HasCriticalFindings(result.Findings) {
+				if h.FailModeClosed() {
+					return fmt.Errorf("agent definition %q blocked: critical injection findings", h.Agent)
+				}
+				fmt.Fprintf(os.Stderr, "WARNING: agent definition %q has critical injection findings (fail_mode: open)\n", h.Agent)
+			}
+		}
+	}
+
 	// Copy agent definition to $CLAUDE_CONFIG_DIR/agents/.
 	if err := sandbox.SCP(sshConfigPath, sandboxName, h.Agent,
 		fmt.Sprintf("%s/agents/", sandbox.SandboxClaudeConfig)); err != nil {
@@ -566,6 +580,21 @@ func bootstrapSandbox(sshConfigPath, sandboxName, repoDir string, h *harness.Har
 	// scripts/, references/, and assets/ bundled with the skill per the
 	// agentskills.io specification).
 	for _, skillPath := range h.Skills {
+		// Host-side scan (Path A): check SKILL.md for injection before
+		// copying into sandbox.
+		if h.SecurityEnabled() {
+			skillFile := filepath.Join(skillPath, "SKILL.md")
+			if content, err := os.ReadFile(skillFile); err == nil {
+				result := security.InputPipeline().Scan(string(content))
+				if security.HasCriticalFindings(result.Findings) {
+					if h.FailModeClosed() {
+						return fmt.Errorf("skill %q blocked: critical injection findings in SKILL.md", skillPath)
+					}
+					fmt.Fprintf(os.Stderr, "WARNING: skill %q has critical injection findings (fail_mode: open)\n", skillPath)
+				}
+			}
+		}
+
 		if err := sandbox.SCP(sshConfigPath, sandboxName, skillPath,
 			fmt.Sprintf("%s/skills/", sandbox.SandboxClaudeConfig)); err != nil {
 			return fmt.Errorf("copying skill %q: %w", skillPath, err)
@@ -777,8 +806,8 @@ func buildClaudeCommand(agentName, model, repoDir string) string {
 }
 
 // buildScanContextCommand builds the SSH command to run `fullsend scan context`
-// inside the sandbox. It finds known context files in the repo directory and
-// passes them as arguments.
+// inside the sandbox. It finds known context files (including SKILL.md in
+// skill directories) in the repo directory and passes them as arguments.
 func buildScanContextCommand(repoDir, traceID string) string {
 	// Defense-in-depth: validate traceID before shell interpolation even though
 	// GenerateTraceID() only produces safe hex characters.
@@ -815,7 +844,7 @@ func buildScanContextCommand(repoDir, traceID string) string {
 	envFile := sandbox.SandboxWorkspace + "/.env"
 
 	return fmt.Sprintf(
-		"source %s && FULLSEND_TRACE_ID='%s' find '%s' -maxdepth 3 -type f \\( %s \\) -exec fullsend scan context {} +",
+		"source %s && FULLSEND_TRACE_ID='%s' find '%s' -maxdepth 5 -type f \\( %s \\) -exec fullsend scan context {} +",
 		envFile, traceID, escapedDir, inameExpr,
 	)
 }
