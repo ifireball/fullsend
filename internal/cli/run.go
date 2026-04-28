@@ -315,6 +315,25 @@ func runAgent(agentName, fullsendDir, outputBase, targetRepo string, printer *ui
 		printer.StepDone(fmt.Sprintf("Agent-input files copied (%.1fs)", time.Since(inputStart).Seconds()))
 	}
 
+	// 8c. Host-side scan (Path A): scan the target repo's context files
+	// (CLAUDE.md, AGENTS.md, SKILL.md, etc.) before they reach the sandbox.
+	// The target branch may contain attacker-controlled files from a PR.
+	if h.SecurityEnabled() {
+		printer.StepStart("Scanning target repo context files")
+		findings := scanRepoContextFiles(repoSrc)
+		if security.HasCriticalFindings(findings) {
+			if h.FailModeClosed() {
+				printer.StepFail("BLOCKED: critical injection findings in target repo context files")
+				return fmt.Errorf("target repo context scan blocked: critical findings detected")
+			}
+			printer.StepWarn("Target repo has critical injection findings (fail_mode: open)")
+		} else if len(findings) > 0 {
+			printer.StepWarn(fmt.Sprintf("Target repo context scan: %d finding(s)", len(findings)))
+		} else {
+			printer.StepDone("Target repo context files clean")
+		}
+	}
+
 	// 9a. Generate trace ID for security finding correlation.
 	traceID := security.GenerateTraceID()
 	printer.KeyValue("Trace ID", traceID)
@@ -847,6 +866,35 @@ func buildScanContextCommand(repoDir, traceID string) string {
 		"source %s && FULLSEND_TRACE_ID='%s' find '%s' -maxdepth 5 -type f \\( %s \\) -exec fullsend scan context {} +",
 		envFile, traceID, escapedDir, inameExpr,
 	)
+}
+
+// scanRepoContextFiles walks the target repo directory for known context
+// files (CLAUDE.md, AGENTS.md, SKILL.md, etc.) and runs the InputPipeline
+// on each. Returns all findings across scanned files.
+func scanRepoContextFiles(repoDir string) []security.Finding {
+	pipeline := security.InputPipeline()
+	var allFindings []security.Finding
+
+	_ = filepath.WalkDir(repoDir, func(path string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return nil
+		}
+		if !security.ShouldScan(d.Name()) {
+			return nil
+		}
+		content, err := os.ReadFile(path)
+		if err != nil {
+			return nil
+		}
+		result := pipeline.Scan(string(content))
+		for i := range result.Findings {
+			result.Findings[i].Detail = fmt.Sprintf("%s: %s", path, result.Findings[i].Detail)
+		}
+		allFindings = append(allFindings, result.Findings...)
+		return nil
+	})
+
+	return allFindings
 }
 
 // scanOutputFiles runs the secret redactor on extracted output files,
