@@ -253,6 +253,7 @@ export async function completeManifestHandoffFromDoc(
     writeStagedAppMeta(STAGING_SCM_HOST, ctx.actorLogin, ctx.org, ctx.role, {
       slug: r.slug,
       displayName: r.name,
+      appId: r.appId,
     });
     const installUrl = githubAppInstallationsNewUrl(r.slug);
     setManifestPostResult({ ok: true, installUrl, slug: r.slug });

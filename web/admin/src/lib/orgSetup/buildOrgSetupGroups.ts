@@ -680,6 +680,7 @@ export async function buildOrgSetupGroups(
   let fsIcon: SetupStatusIcon = "warn";
   let fsSubtitle: string;
   let fsPrimary: SetupPrimaryAction = null;
+  let fsItemLines = fullsendRepoItemLines(reports, roles);
 
   if (fsHint) {
     fsIcon = "warn";
@@ -696,8 +697,7 @@ export async function buildOrgSetupGroups(
     fsPrimary = { label: "Install", disabled: false };
   } else if (orgRollup === "degraded") {
     fsIcon = "warn";
-    fsSubtitle =
-      "Some .fullsend settings do not match what Fullsend needs.";
+    fsSubtitle = "Some .fullsend settings do not match what Fullsend needs.";
     fsPrimary = { label: "Repair", disabled: false };
   } else {
     fsIcon = "unknown";
@@ -711,7 +711,7 @@ export async function buildOrgSetupGroups(
     title: ".fullsend repository setup",
     statusIcon: fsIcon,
     subtitle: fsSubtitle,
-    itemLines: fullsendRepoItemLines(reports, roles),
+    itemLines: fsItemLines,
     prerequisiteHint: null,
     primary: fsPrimary,
     githubAppSlug: null,

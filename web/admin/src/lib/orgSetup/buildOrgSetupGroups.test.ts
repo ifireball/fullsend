@@ -499,6 +499,35 @@ describe("buildOrgSetupGroups", () => {
     expect(fullsend?.subtitle).toMatch(/Dispatch token/i);
   });
 
+  it("enables Install on .fullsend when prerequisites are satisfied", async () => {
+    const slug = "myorg-coder";
+    const reports: LayerReport[] = [
+      rep("config-repo", "installed"),
+      rep("workflows", "not_installed"),
+      rep("secrets", "installed"),
+      rep("dispatch-token", "installed"),
+    ];
+    const octokit = mockOctokit({
+      installationSlugs: [slug],
+      slugProbe: "exists",
+    });
+    const groups = await buildOrgSetupGroups({
+      org: "myorg",
+      actorLogin: "alice",
+      octokit,
+      gh: ghWithRepoSecrets as never,
+      reports,
+      agents: [{ role: "coder" }],
+      parsedConfig: null,
+      greenfieldDeploy: false,
+    });
+    const fullsend = groups.find((g) => g.id === "fullsend_repo_setup");
+    expect(fullsend?.primary?.label).toBe("Install");
+    expect(fullsend?.primary?.disabled).not.toBe(true);
+    expect(fullsend?.subtitle).toMatch(/Apply changes/i);
+    expect(fullsend?.itemLines.find((li) => li.id === "item_fullsend_apply_cli")).toBeUndefined();
+  });
+
   it("offers Install app on Organisation when app exists but is not installed", async () => {
     const reports: LayerReport[] = [
       rep("config-repo", "installed"),

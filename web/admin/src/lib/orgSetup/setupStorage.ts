@@ -56,7 +56,7 @@ export function readLocalString(key: string): string | null {
   }
 }
 
-export type StagedAppMeta = { slug?: string; displayName?: string };
+export type StagedAppMeta = { slug?: string; displayName?: string; appId?: number };
 
 export function readStagedAppMeta(
   scmHost: string,
@@ -85,12 +85,45 @@ export function readStagedAppPemPresent(
   return Boolean(pem);
 }
 
+/** PEM bytes staged after manifest handoff (same key as {@link readStagedAppPemPresent}). */
+export function readStagedAppPem(
+  scmHost: string,
+  actorLogin: string,
+  orgLogin: string,
+  role: string,
+): string | null {
+  const pem = readLocalString(stagedAppPemKey(scmHost, actorLogin, orgLogin, role));
+  return pem;
+}
+
+export function clearStagedAppPem(
+  scmHost: string,
+  actorLogin: string,
+  orgLogin: string,
+  role: string,
+): void {
+  try {
+    localStorage.removeItem(stagedAppPemKey(scmHost, actorLogin, orgLogin, role));
+  } catch {
+    /* ignore */
+  }
+}
+
 export function readStagedDispatchPatPresent(
   scmHost: string,
   actorLogin: string,
   orgLogin: string,
 ): boolean {
   return Boolean(readLocalString(stagedDispatchPatKey(scmHost, actorLogin, orgLogin)));
+}
+
+/** Fine-grained PAT staged for org secret write (Dispatch token card). */
+export function readStagedDispatchPat(
+  scmHost: string,
+  actorLogin: string,
+  orgLogin: string,
+): string | null {
+  return readLocalString(stagedDispatchPatKey(scmHost, actorLogin, orgLogin));
 }
 
 export function writeStagedDispatchPat(

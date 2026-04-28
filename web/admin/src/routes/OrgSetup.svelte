@@ -30,7 +30,6 @@
     buildOrgSetupGroups,
     setupBoardTitlesFromAgents,
   } from "../lib/orgSetup/mapAnalyzeToGroups";
-  import type { SetupGroupViewModel } from "../lib/orgSetup/types";
   import {
     githubAppInstallationsNewUrl,
     submitAgentAppManifestSameWindow,
@@ -41,7 +40,14 @@
     stashManifestReturnContext,
   } from "../lib/auth/oauth";
   import { putOrgActionsSecret } from "../lib/github/putOrgActionsSecret";
+  import {
+    applyFullsendRepoSetup,
+    fullsendApplyLineIds,
+    type ApplyLineState,
+  } from "../lib/orgSetup/applyFullsendRepoSetup";
   import { clearStagedDispatchPat, writeStagedDispatchPat } from "../lib/orgSetup/setupStorage";
+  import type { SetupGroupViewModel, SetupItemLineTone } from "../lib/orgSetup/types";
+  import type { LayerReport } from "../lib/status/types";
 
   let { params = { org: "" } }: { params?: { org?: string } } = $props();
   const org = $derived(decodeURIComponent((params?.org ?? "").trim()));
@@ -77,6 +83,15 @@
   let dispatchSaveError = $state<string | null>(null);
   let dispatchSavePending = $state(false);
 
+  /** Last successful `analyzeOrgLayers` snapshot (drives in-browser `.fullsend` apply). */
+  let lastLayerReports = $state<LayerReport[] | null>(null);
+  let fullsendApplyAbort: AbortController | null = null;
+  let fullsendApplyPhase = $state<string | null>(null);
+  let fullsendApplyLineState = $state<Record<string, ApplyLineState>>({});
+  let fullsendApplyLineErr = $state<Record<string, string>>({});
+  let fullsendApplyRunning = $state(false);
+  let fullsendApplyPartial = $state(false);
+
   /** Per FSM: one card per agent role + dispatch token + .fullsend setup. */
   const placeholderCardCount = $derived(
     parsedConfig
@@ -95,6 +110,14 @@
     loadAbort?.abort();
     loadAbort = new AbortController();
     const signal = loadAbort.signal;
+
+    fullsendApplyAbort?.abort();
+    fullsendApplyAbort = null;
+    fullsendApplyRunning = false;
+    fullsendApplyPartial = false;
+    fullsendApplyPhase = null;
+    fullsendApplyLineState = {};
+    fullsendApplyLineErr = {};
 
     pageError = null;
     configValidateError = null;
@@ -204,6 +227,7 @@
         enabledRepos,
       });
       if (signal.aborted || gen !== loadGen) return;
+      lastLayerReports = reports;
 
       const configReport = reports.find((r) => r.name === "config-repo");
       const listDeploy = configRepoIsGreenfieldDeploy(configReport);
@@ -228,6 +252,7 @@
       analyzeError =
         e instanceof Error ? e.message : "Failed to analyze Fullsend deployment status.";
       groups = [];
+      lastLayerReports = null;
       setupFlow = null;
       greenfieldDeploy = false;
     } finally {
@@ -286,6 +311,7 @@
       });
       if (loadGen !== loadSnapshot) return;
       groups = nextGroups;
+      lastLayerReports = reports;
       greenfieldDeploy = listDeploy;
       setupFlow = listDeploy ? "deploy" : "repair";
     } catch (e) {
@@ -403,6 +429,127 @@
     }
   }
 
+  function displayFullsendGroup(g: SetupGroupViewModel): SetupGroupViewModel {
+    if (g.id !== "fullsend_repo_setup" || (!fullsendApplyRunning && !fullsendApplyPartial)) {
+      return g;
+    }
+    const withApplyStateLabel = (label: string, state: ApplyLineState): string => {
+      const stateLabel =
+        state === "done"
+          ? "ok"
+          : state === "failed"
+            ? "failed"
+            : state === "in_progress"
+              ? "in progress"
+              : "queued";
+      const staleStatusSuffix =
+        /\s[-—]\s(ok|missing|needs attention|unknown|queued|in progress|failed)(?:\..*)?$/i;
+      if (staleStatusSuffix.test(label)) {
+        return label.replace(staleStatusSuffix, ` — ${stateLabel}`);
+      }
+      return `${label} — ${stateLabel}`;
+    };
+    const itemLines = g.itemLines.map((line) => {
+      const id = line.id ?? "";
+      const st = fullsendApplyLineState[id];
+      if (!st) return line;
+      const lineTone: SetupItemLineTone =
+        st === "done" ? "ok" : st === "failed" ? "error" : "unknown";
+      const err = fullsendApplyLineErr[id];
+      const detail = st === "failed" && err ? err : line.detail;
+      return { ...line, lineTone, detail, label: withApplyStateLabel(line.label, st) };
+    });
+    let statusIcon = g.statusIcon;
+    let subtitle = g.subtitle;
+    let primary = g.primary;
+    if (fullsendApplyRunning) {
+      statusIcon = "in_progress";
+      subtitle = fullsendApplyPhase ?? "Applying changes to `.fullsend` on GitHub…";
+      primary = { label: "Abort" };
+    } else if (fullsendApplyPartial) {
+      statusIcon = "warn";
+      subtitle = fullsendApplyPhase ?? "Some steps failed.";
+      primary = { label: "Retry failed" };
+    }
+    return { ...g, itemLines, statusIcon, subtitle, primary };
+  }
+
+  async function runFullsendApplyBundle(): Promise<void> {
+    const token = loadToken()?.accessToken;
+    const actorLogin = get(githubUser)?.login?.trim() ?? "";
+    if (!token || !org || !lastLayerReports) return;
+
+    fullsendApplyAbort?.abort();
+    fullsendApplyAbort = new AbortController();
+    const signal = fullsendApplyAbort.signal;
+
+    const agentList = parsedConfig
+      ? agentsFromConfig(parsedConfig)
+      : greenfieldDeploy
+        ? defaultFullsendAgentRows()
+        : [];
+    const ids = fullsendApplyLineIds(agentList.map((a) => a.role));
+    const initialLineState: Record<string, ApplyLineState> = {};
+    for (const id of ids) {
+      initialLineState[id] = "queued";
+    }
+    fullsendApplyLineState = initialLineState;
+    fullsendApplyLineErr = {};
+    fullsendApplyRunning = true;
+    fullsendApplyPartial = false;
+    fullsendApplyPhase = "Starting…";
+
+    try {
+      const octokit = createUserOctokit(token);
+      await applyFullsendRepoSetup({
+        octokit,
+        org,
+        actorLogin: actorLogin || "unknown",
+        scmHost: scmHostForSetup,
+        agents: agentList,
+        parsedConfig,
+        greenfieldDeploy,
+        signal,
+        onPhase: (msg) => {
+          fullsendApplyPhase = msg;
+        },
+        onLine: (ev) => {
+          fullsendApplyLineState = { ...fullsendApplyLineState, [ev.id]: ev.state };
+          if (ev.error) {
+            fullsendApplyLineErr = { ...fullsendApplyLineErr, [ev.id]: ev.error };
+          }
+        },
+      });
+      fullsendApplyRunning = false;
+      fullsendApplyPartial = false;
+      fullsendApplyPhase = null;
+      fullsendApplyLineState = {};
+      fullsendApplyLineErr = {};
+      fullsendApplyAbort = null;
+      await loadSetup();
+    } catch (e) {
+      fullsendApplyRunning = false;
+      fullsendApplyPartial = true;
+      const aborted = signal.aborted;
+      fullsendApplyPhase = aborted
+        ? "Stopped before completion."
+        : e instanceof Error
+          ? e.message
+          : String(e);
+      const nextLines = { ...fullsendApplyLineState };
+      const nextErr = { ...fullsendApplyLineErr };
+      const errMsg = aborted ? "Aborted" : e instanceof Error ? e.message : String(e);
+      for (const id of Object.keys(nextLines)) {
+        if (nextLines[id] === "in_progress" || (aborted && nextLines[id] === "queued")) {
+          nextLines[id] = "failed";
+          if (!nextErr[id]) nextErr[id] = errMsg;
+        }
+      }
+      fullsendApplyLineState = nextLines;
+      fullsendApplyLineErr = nextErr;
+    }
+  }
+
   function onGroupPrimaryClick(g: SetupGroupViewModel): void {
     if (g.kind === "github_app") {
       const role = roleFromGithubAppGroupId(g.id);
@@ -449,8 +596,18 @@
       }
       return;
     }
-    if (g.kind === "fullsend_repo_setup" && g.primary) {
-      /* Apply bundle not wired in SPA yet (FSM `fs_applying`). */
+    if (g.kind === "fullsend_repo_setup") {
+      if (g.primary?.label === "Abort") {
+        fullsendApplyAbort?.abort();
+        return;
+      }
+      if (g.primary?.label === "Retry failed") {
+        void runFullsendApplyBundle();
+        return;
+      }
+      if (g.primary?.label === "Install" || g.primary?.label === "Repair") {
+        void runFullsendApplyBundle();
+      }
     }
   }
 
@@ -544,30 +701,31 @@
       {:else}
         {#each groups as g (g.id)}
           {@const hintId = g.prerequisiteHint ? prereqId(g.id) : undefined}
+          {@const card = displayFullsendGroup(g)}
           <article
             class="setup-card"
             class:setup-card--muted={g.prerequisiteHint !== null}
           >
             <div class="setup-card-heading">
-              {#if g.statusIcon === "ok"}
+              {#if card.statusIcon === "ok"}
                 <span class="status-dot status-dot--ok" aria-hidden="true"></span>
-              {:else if g.statusIcon === "warn"}
+              {:else if card.statusIcon === "warn"}
                 <span class="status-warn" aria-hidden="true">▲</span>
-              {:else if g.statusIcon === "error"}
+              {:else if card.statusIcon === "error"}
                 <span class="status-warn" aria-hidden="true">!</span>
-              {:else if g.statusIcon === "in_progress"}
+              {:else if card.statusIcon === "in_progress"}
                 <span class="row-spinner-disc row-spinner-disc--inline" aria-hidden="true"></span>
               {:else}
                 <span class="rollup-unknown" aria-hidden="true">?</span>
               {/if}
-              <h2 class="setup-card-title">{g.title}</h2>
+              <h2 class="setup-card-title">{card.title}</h2>
             </div>
             {#if g.prerequisiteHint}
               <p id={hintId} class="prereq-hint">{g.prerequisiteHint}</p>
             {/if}
-            <p class="setup-card-subtitle">{g.subtitle}</p>
+            <p class="setup-card-subtitle">{card.subtitle}</p>
             <ul class="item-lines">
-              {#each g.itemLines as line (line.id ?? line.label)}
+              {#each card.itemLines as line (line.id ?? line.label)}
                 <li
                   class="item-line item-line-row"
                   class:item-line--ok={line.lineTone === "ok"}
@@ -576,6 +734,9 @@
                   class:item-line--unknown={line.lineTone === "unknown"}
                 >
                   <div class="item-line-label-group">
+                    {#if g.id === "fullsend_repo_setup" && fullsendApplyLineState[line.id ?? ""] === "in_progress"}
+                      <span class="row-spinner-disc row-spinner-disc--inline" aria-hidden="true"></span>
+                    {/if}
                     <span class="item-line-text">{line.label}</span>
                     {#if line.trailingAction?.kind === "recheck_org_app_installs"}
                       {#if recheckInstallsPending}
@@ -678,16 +839,16 @@
               >
                 {dispatchSavePending ? "Saving…" : "Save token"}
               </button>
-            {:else if g.primary}
+            {:else if card.primary}
               <button
                 type="button"
                 class="btn"
                 class:btn-primary={g.kind === "fullsend_repo_setup"}
-                disabled={g.primary.disabled === true}
+                disabled={card.primary.disabled === true}
                 aria-describedby={g.prerequisiteHint ? hintId : undefined}
-                onclick={() => onGroupPrimaryClick(g)}
+                onclick={() => onGroupPrimaryClick(card)}
               >
-                {g.primary.label}
+                {card.primary.label}
               </button>
             {/if}
           </article>
