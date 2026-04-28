@@ -16,10 +16,9 @@ export type SetupStatusIcon =
 export type SetupItemLineTone = "ok" | "warn" | "error" | "unknown";
 
 /** Row-level control rendered after the label (org setup screen only). */
-export type SetupItemLineTrailingAction = {
-  kind: "recheck_org_app_installs";
-  label: string;
-};
+export type SetupItemLineTrailingAction =
+  | { kind: "recheck_org_app_installs"; label: string }
+  | { kind: "open_dispatch_token_paste"; label: string };
 
 export type SetupItemLine = {
   id?: string;

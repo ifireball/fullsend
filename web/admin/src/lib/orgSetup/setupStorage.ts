@@ -93,6 +93,33 @@ export function readStagedDispatchPatPresent(
   return Boolean(readLocalString(stagedDispatchPatKey(scmHost, actorLogin, orgLogin)));
 }
 
+export function writeStagedDispatchPat(
+  scmHost: string,
+  actorLogin: string,
+  orgLogin: string,
+  token: string,
+): void {
+  const v = token.trim();
+  if (!v) return;
+  try {
+    localStorage.setItem(stagedDispatchPatKey(scmHost, actorLogin, orgLogin), v);
+  } catch {
+    /* ignore */
+  }
+}
+
+export function clearStagedDispatchPat(
+  scmHost: string,
+  actorLogin: string,
+  orgLogin: string,
+): void {
+  try {
+    localStorage.removeItem(stagedDispatchPatKey(scmHost, actorLogin, orgLogin));
+  } catch {
+    /* ignore */
+  }
+}
+
 export function writeStagedAppPem(
   scmHost: string,
   actorLogin: string,

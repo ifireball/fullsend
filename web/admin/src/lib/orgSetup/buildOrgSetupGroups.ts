@@ -197,8 +197,7 @@ function installationSlugSetsEqual(a: Set<string>, b: Set<string>): boolean {
  * GitHub’s org installation list can briefly disagree with the UI after install/uninstall
  * (read replicas / propagation). Re-read until two consecutive snapshots match.
  */
-const INSTALL_LIST_SETTLE_MS =
-  typeof process !== "undefined" && process.env.VITEST ? 0 : 400;
+const INSTALL_LIST_SETTLE_MS = import.meta.env.VITEST ? 0 : 400;
 const INSTALL_LIST_MAX_SETTLE_READS = 4;
 
 async function fetchOrgInstallationSlugSet(
@@ -638,15 +637,22 @@ export async function buildOrgSetupGroups(
     dispatchPrimary = { label: "Create token in GitHub" };
   }
 
-  const dispatchItems: SetupItemLine[] = [
-    {
-      id: "item_dispatch_token",
-      label: `Dispatch token for workflow triggers — ${
-        dispatchOrgOk ? "ok (org)" : dispatchLocalOk ? "ok (this device)" : "missing"
-      }`,
-      lineTone: dispatchOrgOk || dispatchLocalOk ? "ok" : "warn",
-    },
-  ];
+  const dispatchTokenLine: SetupItemLine = {
+    id: "item_dispatch_token",
+    label: `Dispatch token for workflow triggers — ${
+      dispatchOrgOk ? "ok (org)" : dispatchLocalOk ? "ok (this device)" : "missing"
+    }`,
+    lineTone: dispatchOrgOk || dispatchLocalOk ? "ok" : "warn",
+    ...(!dispatchOrgOk
+      ? {
+          trailingAction: {
+            kind: "open_dispatch_token_paste" as const,
+            label: "Paste token",
+          },
+        }
+      : {}),
+  };
+  const dispatchItems: SetupItemLine[] = [dispatchTokenLine];
   if (dispatchReport?.status === "unknown" && dispatchReport.details[0]) {
     dispatchItems[0] = {
       ...dispatchItems[0]!,

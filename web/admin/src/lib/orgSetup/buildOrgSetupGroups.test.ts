@@ -135,6 +135,35 @@ describe("buildOrgSetupGroups", () => {
     vi.restoreAllMocks();
   });
 
+  it("offers paste token on dispatch row when org secret is not installed", async () => {
+    const reports: LayerReport[] = [
+      rep("config-repo", "installed"),
+      rep("workflows", "installed"),
+      rep("secrets", "not_installed"),
+      rep("dispatch-token", "not_installed"),
+    ];
+    const octokit = mockOctokit({
+      installationSlugs: [],
+      slugProbe: "exists",
+    });
+    const groups = await buildOrgSetupGroups({
+      org: "myorg",
+      actorLogin: "alice",
+      octokit,
+      gh: ghWithRepoSecrets as never,
+      reports,
+      agents: [{ role: "coder" }],
+      parsedConfig: null,
+      greenfieldDeploy: false,
+    });
+    const dispatch = groups.find((g) => g.id === "dispatch_pat");
+    const tokenLine = dispatch?.itemLines.find((li) => li.id === "item_dispatch_token");
+    expect(tokenLine?.trailingAction).toEqual({
+      kind: "open_dispatch_token_paste",
+      label: "Paste token",
+    });
+  });
+
   it("re-reads org installations until two consecutive list responses match", async () => {
     const listAppInstallations = vi
       .fn()

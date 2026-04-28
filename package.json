@@ -33,6 +33,7 @@
   },
   "dependencies": {
     "@octokit/rest": "^21.1.1",
+    "libsodium-wrappers": "^0.8.4",
     "svelte-spa-router": "^4.0.1",
     "yaml": "^2.8.3"
   }

@@ -14,6 +14,7 @@
   import {
     CONFIG_FILE_PATH,
     CONFIG_REPO_NAME,
+    DISPATCH_TOKEN_SECRET_NAME,
   } from "../lib/layers/constants";
   import { createLayerGithub } from "../lib/layers/githubClient";
   import {
@@ -39,6 +40,8 @@
     MANIFEST_POST_RESULT_KEY,
     stashManifestReturnContext,
   } from "../lib/auth/oauth";
+  import { putOrgActionsSecret } from "../lib/github/putOrgActionsSecret";
+  import { clearStagedDispatchPat, writeStagedDispatchPat } from "../lib/orgSetup/setupStorage";
 
   let { params = { org: "" } }: { params?: { org?: string } } = $props();
   const org = $derived(decodeURIComponent((params?.org ?? "").trim()));
@@ -67,6 +70,12 @@
   let greenfieldDeploy = $state(false);
   /** True while a lightweight refresh (re-run analyse + setup groups) is in flight. */
   let recheckInstallsPending = $state(false);
+
+  const scmHostForSetup = "github.com";
+  let dispatchPasteOpen = $state(false);
+  let dispatchPatDraft = $state("");
+  let dispatchSaveError = $state<string | null>(null);
+  let dispatchSavePending = $state(false);
 
   /** Per FSM: one card per agent role + dispatch token + .fullsend setup. */
   const placeholderCardCount = $derived(
@@ -117,6 +126,9 @@
     orgDisplayName = null;
     orgAvatarUrl = null;
     parsedConfig = null;
+    dispatchPasteOpen = false;
+    dispatchPatDraft = "";
+    dispatchSaveError = null;
 
     const token = loadToken()?.accessToken;
     if (!token || !org) {
@@ -342,6 +354,55 @@
     return role.length > 0 ? role : null;
   }
 
+  async function saveDispatchPatToken(): Promise<void> {
+    const raw = dispatchPatDraft.trim();
+    if (!raw) {
+      dispatchSaveError = "Paste the token from GitHub.";
+      return;
+    }
+    const token = loadToken()?.accessToken;
+    if (!token || !org) {
+      dispatchSaveError = "Sign in to save the token.";
+      return;
+    }
+    const actorLogin = get(githubUser)?.login?.trim() ?? "unknown";
+    dispatchSavePending = true;
+    dispatchSaveError = null;
+    try {
+      const octokit = createUserOctokit(token);
+      const gh = createLayerGithub(octokit);
+      const repoExists = await gh.getRepoExists(org, CONFIG_REPO_NAME);
+      if (repoExists) {
+        const { data: repo } = await octokit.repos.get({
+          owner: org,
+          repo: CONFIG_REPO_NAME,
+        });
+        await putOrgActionsSecret(
+          octokit,
+          org,
+          DISPATCH_TOKEN_SECRET_NAME,
+          raw,
+          [repo.id],
+        );
+        clearStagedDispatchPat(scmHostForSetup, actorLogin, org);
+      } else {
+        writeStagedDispatchPat(scmHostForSetup, actorLogin, org, raw);
+      }
+      dispatchPatDraft = "";
+      dispatchPasteOpen = false;
+      await loadSetup();
+    } catch (e) {
+      dispatchSaveError =
+        e instanceof RequestError
+          ? e.message
+          : e instanceof Error
+            ? e.message
+            : "Failed to save token.";
+    } finally {
+      dispatchSavePending = false;
+    }
+  }
+
   function onGroupPrimaryClick(g: SetupGroupViewModel): void {
     if (g.kind === "github_app") {
       const role = roleFromGithubAppGroupId(g.id);
@@ -378,8 +439,14 @@
       }
       return;
     }
-    if (g.kind === "dispatch_pat" && g.dispatchPatCreationUrl && g.primary?.label) {
-      window.location.assign(g.dispatchPatCreationUrl);
+    if (g.kind === "dispatch_pat") {
+      if (dispatchPasteOpen) {
+        void saveDispatchPatToken();
+        return;
+      }
+      if (g.dispatchPatCreationUrl && g.primary?.label) {
+        window.location.assign(g.dispatchPatCreationUrl);
+      }
       return;
     }
     if (g.kind === "fullsend_repo_setup" && g.primary) {
@@ -524,6 +591,31 @@
                           {line.trailingAction.label}
                         </button>
                       {/if}
+                    {:else if line.trailingAction?.kind === "open_dispatch_token_paste" && g.kind === "dispatch_pat"}
+                      {#if !dispatchPasteOpen}
+                        <button
+                          type="button"
+                          class="item-line-recheck"
+                          onclick={() => {
+                            dispatchPasteOpen = true;
+                            dispatchSaveError = null;
+                          }}
+                        >
+                          {line.trailingAction.label}
+                        </button>
+                      {:else}
+                        <button
+                          type="button"
+                          class="item-line-recheck item-line-recheck--muted"
+                          onclick={() => {
+                            dispatchPasteOpen = false;
+                            dispatchSaveError = null;
+                            dispatchPatDraft = "";
+                          }}
+                        >
+                          Cancel
+                        </button>
+                      {/if}
                     {/if}
                   </div>
                   {#if line.detail || line.detailLinkHref}
@@ -556,9 +648,37 @@
                     </div>
                   {/if}
                 </li>
+                {#if g.kind === "dispatch_pat" && line.id === "item_dispatch_token" && dispatchPasteOpen}
+                  <li class="item-line item-line-dispatch-paste">
+                    <input
+                      type="text"
+                      class="dispatch-paste-input"
+                      placeholder="paste token here"
+                      autocomplete="off"
+                      autocapitalize="off"
+                      spellcheck="false"
+                      bind:value={dispatchPatDraft}
+                      disabled={dispatchSavePending}
+                      aria-label="Dispatch token to save"
+                    />
+                    {#if dispatchSaveError}
+                      <p class="dispatch-paste-err" role="alert">{dispatchSaveError}</p>
+                    {/if}
+                  </li>
+                {/if}
               {/each}
             </ul>
-            {#if g.primary}
+            {#if g.kind === "dispatch_pat" && dispatchPasteOpen}
+              <button
+                type="button"
+                class="btn btn-primary"
+                disabled={dispatchSavePending}
+                aria-describedby={g.prerequisiteHint ? hintId : undefined}
+                onclick={() => void saveDispatchPatToken()}
+              >
+                {dispatchSavePending ? "Saving…" : "Save token"}
+              </button>
+            {:else if g.primary}
               <button
                 type="button"
                 class="btn"
@@ -720,6 +840,36 @@
     outline: 2px solid #0969da;
     outline-offset: 2px;
     border-radius: 2px;
+  }
+  .item-line-recheck--muted {
+    color: #57606a;
+    text-decoration: none;
+  }
+  .item-line-dispatch-paste {
+    list-style: none;
+    margin: 0.35rem 0 0.15rem;
+    margin-left: -1.1rem;
+    padding-left: 0;
+  }
+  .dispatch-paste-input {
+    box-sizing: border-box;
+    width: 100%;
+    max-width: 100%;
+    margin-top: 0.25rem;
+    padding: 0.45rem 0.55rem;
+    border: 1px solid #d0d7de;
+    border-radius: 6px;
+    font: inherit;
+    font-size: 0.88rem;
+  }
+  .dispatch-paste-input:disabled {
+    opacity: 0.65;
+    cursor: not-allowed;
+  }
+  .dispatch-paste-err {
+    margin: 0.35rem 0 0;
+    font-size: 0.82rem;
+    color: #a40e26;
   }
   .item-line--unknown {
     color: #8c959f;
