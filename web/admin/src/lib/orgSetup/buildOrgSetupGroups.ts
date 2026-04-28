@@ -116,7 +116,8 @@ function reportNamed(
   return reports.find((r) => r.name === name);
 }
 
-function fullsendRepoItemLines(
+/** Item rows for the `.fullsend` setup card (shared with org dashboard). */
+export function fullsendRepoItemLines(
   reports: LayerReport[],
   roles: string[],
 ): SetupItemLine[] {
@@ -725,4 +726,72 @@ export async function buildOrgSetupGroups(
   const dispatch = groups.find((g) => g.id === "dispatch_pat");
   const fullsend = groups.find((g) => g.id === "fullsend_repo_setup");
   return [...apps, ...(dispatch ? [dispatch] : []), ...(fullsend ? [fullsend] : [])];
+}
+
+/** Org dashboard: same copy as setup’s `.fullsend` card, but navigation-only (no Apply). */
+export function dashboardFullsendInstallCardViewModel(input: {
+  org: string;
+  reports: LayerReport[];
+  roles: string[];
+}): {
+  title: string;
+  statusIcon: SetupStatusIcon;
+  subtitle: string;
+  itemLines: SetupItemLine[];
+  setupHref: string;
+  /** When the install stack is fully healthy, omit the setup CTA on the dashboard. */
+  linkLabel: string | null;
+  linkPrimary: boolean;
+} {
+  const { org, reports, roles } = input;
+  const orgRollup = rollupOrgLayerStatus(reports);
+  const itemLines = fullsendRepoItemLines(reports, roles);
+  const setupHref = `#/org/${encodeURIComponent(org)}/setup`;
+  const title = ".fullsend repository setup";
+
+  if (orgRollup === "installed") {
+    return {
+      title,
+      statusIcon: "ok",
+      subtitle:
+        ".fullsend is present and matches Fullsend's required configuration for this organisation.",
+      itemLines,
+      setupHref,
+      linkLabel: null,
+      linkPrimary: false,
+    };
+  }
+  if (orgRollup === "not_installed") {
+    return {
+      title,
+      statusIcon: "warn",
+      subtitle:
+        ".fullsend is missing or incomplete. Use the org setup page to install or repair it on GitHub.",
+      itemLines,
+      setupHref,
+      linkLabel: "Open org setup",
+      linkPrimary: true,
+    };
+  }
+  if (orgRollup === "degraded") {
+    return {
+      title,
+      statusIcon: "warn",
+      subtitle: "Some .fullsend settings do not match what Fullsend needs. Fix them on the setup page.",
+      itemLines,
+      setupHref,
+      linkLabel: "Open org setup",
+      linkPrimary: true,
+    };
+  }
+  return {
+    title,
+    statusIcon: "unknown",
+    subtitle:
+      "Could not fully verify .fullsend against GitHub. Open the setup page to review permissions and configuration.",
+    itemLines,
+    setupHref,
+    linkLabel: "Open org setup",
+    linkPrimary: true,
+  };
 }

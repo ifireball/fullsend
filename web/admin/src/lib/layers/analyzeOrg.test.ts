@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { LayerGithub } from "./githubClient";
-import { analyzeOrgLayers } from "./analyzeOrg";
+import { analyzeOrgInstallRollupLayers, analyzeOrgLayers } from "./analyzeOrg";
 import {
   AGENT_WORKFLOW_PATH,
   CODEOWNERS_PATH,
@@ -38,6 +38,56 @@ function fullStackMock(): LayerGithub {
     orgSecretExists: async () => ({ kind: "ok", exists: true }),
   };
 }
+
+describe("analyzeOrgInstallRollupLayers", () => {
+  it("returns installed rollup without per-repo enrollment calls", async () => {
+    const gh = fullStackMock();
+    const { reports, rollup } = await analyzeOrgInstallRollupLayers({
+      org: "acme",
+      gh,
+      agents: [{ role: "fullsend" }],
+    });
+    expect(reports).toHaveLength(4);
+    expect(reports.map((r) => r.name)).toEqual([
+      "config-repo",
+      "workflows",
+      "secrets",
+      "dispatch-token",
+    ]);
+    expect(rollup).toBe("installed");
+  });
+
+  it("stays installed when enrollment would be not_installed (shim missing on r1)", async () => {
+    const gh: LayerGithub = {
+      getRepoExists: async (_o, repo) => repo === CONFIG_REPO_NAME,
+      getRepoFileUtf8: async (_org, repo, path) => {
+        if (repo === CONFIG_REPO_NAME && path === CONFIG_FILE_PATH) return validConfig;
+        if (repo === CONFIG_REPO_NAME) {
+          return [AGENT_WORKFLOW_PATH, ONBOARD_WORKFLOW_PATH, CODEOWNERS_PATH].includes(path)
+            ? "ok"
+            : null;
+        }
+        return null;
+      },
+      repoSecretExists: async (_o, _r, name) => name === secretNameForRole("fullsend"),
+      repoVariableExists: async (_o, _r, name) => name === variableNameForRole("fullsend"),
+      orgSecretExists: async () => ({ kind: "ok", exists: true }),
+    };
+    const { rollup: rollupInstall } = await analyzeOrgInstallRollupLayers({
+      org: "acme",
+      gh,
+      agents: [{ role: "fullsend" }],
+    });
+    const { rollup: rollupFull } = await analyzeOrgLayers({
+      org: "acme",
+      gh,
+      agents: [{ role: "fullsend" }],
+      enabledRepos: ["r1"],
+    });
+    expect(rollupInstall).toBe("installed");
+    expect(rollupFull).toBe("not_installed");
+  });
+});
 
 describe("analyzeOrgLayers", () => {
   it("returns installed rollup when mock stack is healthy", async () => {

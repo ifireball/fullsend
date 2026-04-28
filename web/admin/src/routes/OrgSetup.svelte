@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { get } from "svelte/store";
+  import { params as routeParams } from "svelte-spa-router";
   import { RequestError } from "@octokit/request-error";
   import { githubUser } from "../lib/auth/session";
   import { setNavOrgContext } from "../lib/shell/navOrgContext";
@@ -49,8 +50,10 @@
   import type { SetupGroupViewModel, SetupItemLineTone } from "../lib/orgSetup/types";
   import type { LayerReport } from "../lib/status/types";
 
-  let { params = { org: "" } }: { params?: { org?: string } } = $props();
-  const org = $derived(decodeURIComponent((params?.org ?? "").trim()));
+  /** Same as OrgDetail: use router `params` store so `:org` updates when the route is reused. */
+  const org = $derived(
+    decodeURIComponent(String(($routeParams as { org?: string } | undefined)?.org ?? "").trim()),
+  );
 
   let loadGen = 0;
   /** Nested recheck calls; spinner clears when the last one finishes. */

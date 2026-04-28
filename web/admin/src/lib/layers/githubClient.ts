@@ -23,6 +23,11 @@ function isNotFound(err: unknown): boolean {
   return err instanceof RequestError && err.status === 404;
 }
 
+/** Empty repos (no default branch / no commits) return 409 for contents API. */
+function isEmptyRepositoryConflict(err: unknown): boolean {
+  return err instanceof RequestError && err.status === 409;
+}
+
 function decodeContentBase64(b64: string): string {
   const normalized = b64.replace(/\n/g, "");
   const binary = atob(normalized);
@@ -58,7 +63,7 @@ export function createLayerGithub(octokit: Octokit): LayerGithub {
         }
         return decodeContentBase64(data.content);
       } catch (err) {
-        if (isNotFound(err)) return null;
+        if (isNotFound(err) || isEmptyRepositoryConflict(err)) return null;
         throw err;
       }
     },

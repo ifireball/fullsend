@@ -1,12 +1,13 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { get } from "svelte/store";
+  import { params as routeParams } from "svelte-spa-router";
   import { RequestError } from "@octokit/request-error";
   import { githubUser } from "../lib/auth/session";
-  import { setNavOrgContext } from "../lib/shell/navOrgContext";
+  import { navOrgContext, setNavOrgContext } from "../lib/shell/navOrgContext";
   import { loadToken } from "../lib/auth/tokenStore";
   import { createUserOctokit } from "../lib/github/client";
-  import { analyzeOrgLayers } from "../lib/layers/analyzeOrg";
+  import { analyzeOrgInstallRollupLayers } from "../lib/layers/analyzeOrg";
   import {
     CONFIG_FILE_PATH,
     CONFIG_REPO_NAME,
@@ -15,12 +16,13 @@
   import { createLayerGithub } from "../lib/layers/githubClient";
   import {
     agentsFromConfig,
-    enabledReposFromConfig,
+    defaultFullsendAgentRows,
     parseOrgConfigYaml,
     validateOrgConfig,
     type OrgConfigYaml,
   } from "../lib/layers/orgConfigParse";
-  import type { LayerStatus } from "../lib/status/types";
+  import FullsendOrgDashboardCard from "../lib/orgSetup/FullsendOrgDashboardCard.svelte";
+  import type { LayerReport } from "../lib/status/types";
   import {
     classifyRepoUnionKind,
     filterRepoNamesBySearch,
@@ -29,14 +31,22 @@
     sortedUnionRepoNames,
   } from "../lib/repos/unionConfig";
 
-  let { params = { org: "" } }: { params?: { org?: string } } = $props();
-  const org = $derived(decodeURIComponent((params?.org ?? "").trim()));
+  /**
+   * Read the matched `:org` from the router store, not `$props().params`.
+   * With Svelte 5 + `svelte-spa-router`, the same route component instance can be reused while
+   * props stay stale; the store is updated on every match (see Router.svelte `params.set`).
+   */
+  const org = $derived(
+    decodeURIComponent(String(($routeParams as { org?: string } | undefined)?.org ?? "").trim()),
+  );
 
   const DISPLAY_CAP = 15;
 
   let loadGen = 0;
   let loadAbort: AbortController | null = null;
   let rowResolveAbort: AbortController | null = null;
+  /** Coalesces repo-row `$effect` work to the next microtask so we never start resolves during a flush. */
+  let repoRowKickEpoch = 0;
 
   let pageError = $state<string | null>(null);
   let orgDisplayName = $state<string | null>(null);
@@ -48,9 +58,11 @@
   let parsedConfig = $state<OrgConfigYaml | null>(null);
   let configValidateError = $state<string | null>(null);
 
-  let rollupStatus = $state<LayerStatus | null>(null);
-  let layersLoading = $state(true);
-  let layersError = $state<string | null>(null);
+  /** `.fullsend` install stack card (same signals as org setup, navigation-only). */
+  let fullsendInstallPending = $state(true);
+  let fullsendInstallError = $state<string | null>(null);
+  let fullsendInstallReports = $state<LayerReport[] | null>(null);
+  let fullsendAgentRoles = $state<string[]>([]);
 
   let search = $state("");
   let listLoading = $state(true);
@@ -78,6 +90,39 @@
     return name.replace(/[^a-zA-Z0-9_-]/g, "_");
   }
 
+  /**
+   * Avoid `navOrgContext.set` during an `$effect` flush — that re-renders the shell (and Router)
+   * while Svelte is still applying OrgDetail updates, which can wedge the tab (hash/state move but
+   * no paint, buttons feel dead). Defer the actual store write to a microtask.
+   */
+  function applyNavOrgBarIfChanged(
+    login: string,
+    avatarUrl: string | null,
+    displayName: string | null,
+  ): void {
+    const av = avatarUrl ?? null;
+    const dn = displayName ?? null;
+    queueMicrotask(() => {
+      const cur = get(navOrgContext);
+      if (
+        cur !== null &&
+        cur.login === login &&
+        cur.avatarUrl === av &&
+        (cur.displayName ?? null) === dn &&
+        cur.setupFlow === undefined &&
+        cur.orgClusterLinksToDashboard !== false
+      ) {
+        return;
+      }
+      setNavOrgContext({
+        login,
+        avatarUrl: av,
+        displayName: dn,
+        orgClusterLinksToDashboard: true,
+      });
+    });
+  }
+
   async function resolveRepoRows(
     names: string[],
     orgName: string,
@@ -93,7 +138,7 @@
       for (const n of names) {
         next[n] = { kind: "row_error", message: "Not signed in." };
       }
-      rowUi = next;
+      rowUi = { ...rowUi, ...next };
       return;
     }
 
@@ -104,30 +149,37 @@
         else if (k === "config_only") next[n] = { kind: "R7" };
         else next[n] = { kind: "config_disabled" };
       }
-      rowUi = next;
+      rowUi = { ...rowUi, ...next };
       return;
     }
 
     const octokit = createUserOctokit(token);
     const gh = createLayerGithub(octokit);
 
+    /**
+     * Never assign `rowUi = { ...next }` mid-loop before every `name` in `names` has a row:
+     * otherwise repos later in sort order lose their keys and render as undefined → endless spinner
+     * until earlier `getRepoFileUtf8` awaits finish (or forever if one hangs).
+     */
+    const needShim: string[] = [];
     for (const name of names) {
       if (signal.aborted) return;
       const k = classifyRepoUnionKind(name, ghSet, cfgSet);
       if (k === "github_only") {
         next[name] = { kind: "R6" };
-        continue;
-      }
-      if (k === "config_only") {
+      } else if (k === "config_only") {
         next[name] = { kind: "R7" };
-        continue;
-      }
-      if (!isRepoEnabledInConfig(cfg, name)) {
+      } else if (!isRepoEnabledInConfig(cfg, name)) {
         next[name] = { kind: "config_disabled" };
-        continue;
+      } else {
+        next[name] = { kind: "loading" };
+        needShim.push(name);
       }
-      next[name] = { kind: "loading" };
-      rowUi = { ...next };
+    }
+    rowUi = { ...rowUi, ...next };
+
+    for (const name of needShim) {
+      if (signal.aborted) return;
       try {
         const body = await gh.getRepoFileUtf8(orgName, name, SHIM_WORKFLOW_PATH);
         if (signal.aborted) return;
@@ -139,7 +191,7 @@
           message: e instanceof Error ? e.message : "Failed to evaluate repository.",
         };
       }
-      rowUi = { ...next };
+      rowUi = { ...rowUi, ...next };
     }
   }
 
@@ -152,12 +204,13 @@
 
     pageError = null;
     configValidateError = null;
-    layersError = null;
+    fullsendInstallError = null;
+    fullsendInstallReports = null;
+    fullsendInstallPending = true;
+    fullsendAgentRoles = [];
     orgDisplayName = null;
     orgAvatarUrl = null;
     listLoading = true;
-    layersLoading = true;
-    rollupStatus = null;
     unionAll = [];
     githubNameSet = new Set();
     configNameSet = new Set();
@@ -168,128 +221,157 @@
     if (!token || !org) {
       pageError = !org ? "Missing organisation." : "Sign in to load this organisation.";
       listLoading = false;
-      layersLoading = false;
+      fullsendInstallPending = false;
+      setNavOrgContext(null);
       return;
     }
+
+    /** Breadcrumb: org slug + placeholder avatar until `orgs.get` returns. */
+    applyNavOrgBarIfChanged(org, orgGravatarFallback(org), null);
 
     const octokit = createUserOctokit(token);
     const gh = createLayerGithub(octokit);
 
     try {
-      const { data } = await octokit.orgs.get({ org });
-      if (signal.aborted || gen !== loadGen) return;
-      orgDisplayName = data.name ?? null;
-      orgAvatarUrl = data.avatar_url ?? orgGravatarFallback(org);
-    } catch (e) {
-      if (signal.aborted || gen !== loadGen) return;
-      if (e instanceof RequestError && e.status === 404) {
-        pageError = "Organisation not found or you do not have access.";
-      } else {
-        pageError =
-          e instanceof Error ? e.message : "Failed to load organisation metadata.";
-      }
-      listLoading = false;
-      layersLoading = false;
-      return;
-    }
-
-    const githubNames: string[] = [];
-    try {
-      for await (const res of octokit.paginate.iterator(
-        octokit.repos.listForOrg,
-        { org, per_page: 100, type: "all" },
-      )) {
-        if (signal.aborted || gen !== loadGen) return;
-        for (const r of res.data) {
-          if (r.name && r.name !== CONFIG_REPO_NAME) {
-            githubNames.push(r.name);
-          }
-        }
-      }
-    } catch (e) {
-      if (signal.aborted || gen !== loadGen) return;
-      pageError =
-        e instanceof Error ? e.message : "Failed to list organisation repositories.";
-      listLoading = false;
-      layersLoading = false;
-      return;
-    }
-
-    const githubSet = new Set(githubNames);
-    let cfg: OrgConfigYaml | null = null;
-    const rawConfig = await gh.getRepoFileUtf8(org, CONFIG_REPO_NAME, CONFIG_FILE_PATH);
-    if (signal.aborted || gen !== loadGen) return;
-
-    if (rawConfig !== null) {
       try {
-        cfg = parseOrgConfigYaml(rawConfig);
-        const verr = validateOrgConfig(cfg);
-        if (verr) {
-          configValidateError = verr;
+        const { data } = await octokit.orgs.get({ org });
+        if (signal.aborted || gen !== loadGen) return;
+        orgDisplayName = data.name ?? null;
+        orgAvatarUrl = data.avatar_url ?? orgGravatarFallback(org);
+        applyNavOrgBarIfChanged(
+          org,
+          orgAvatarUrl ?? orgGravatarFallback(org),
+          orgDisplayName,
+        );
+      } catch (e) {
+        if (signal.aborted || gen !== loadGen) return;
+        if (e instanceof RequestError && e.status === 404) {
+          pageError = "Organisation not found or you do not have access.";
+        } else {
+          pageError =
+            e instanceof Error ? e.message : "Failed to load organisation metadata.";
+        }
+        listLoading = false;
+        applyNavOrgBarIfChanged(org, orgGravatarFallback(org), null);
+        return;
+      }
+
+      let cfg: OrgConfigYaml | null = null;
+      const rawConfig = await gh.getRepoFileUtf8(org, CONFIG_REPO_NAME, CONFIG_FILE_PATH);
+      if (signal.aborted || gen !== loadGen) return;
+
+      if (rawConfig !== null) {
+        try {
+          cfg = parseOrgConfigYaml(rawConfig);
+          const verr = validateOrgConfig(cfg);
+          if (verr) {
+            configValidateError = verr;
+            cfg = null;
+          }
+        } catch (e) {
+          configValidateError =
+            e instanceof Error ? e.message : "config.yaml could not be parsed.";
           cfg = null;
         }
-      } catch (e) {
-        configValidateError =
-          e instanceof Error ? e.message : "config.yaml could not be parsed.";
-        cfg = null;
       }
-    }
 
-    parsedConfig = cfg;
-    const configRepoNames = cfg ? repoNamesFromOrgConfig(cfg) : [];
-    const cfgSet = new Set(configRepoNames);
-    githubNameSet = githubSet;
-    configNameSet = cfgSet;
-    unionAll = sortedUnionRepoNames(githubNames, configRepoNames);
-    listLoading = false;
+      parsedConfig = cfg;
+      const configRepoNames = cfg ? repoNamesFromOrgConfig(cfg) : [];
+      const cfgSet = new Set(configRepoNames);
+      configNameSet = cfgSet;
 
-    if (cfg) {
+      /**
+       * Install rollup only touches `.fullsend` + org secret — run it **before** listing every
+       * org repo (pagination can be huge and would keep `fullsendInstallPending` true forever).
+       */
+      fullsendInstallError = null;
+      fullsendInstallReports = null;
       try {
-        const { rollup } = await analyzeOrgLayers({
+        const agentsForAnalyze = cfg ? agentsFromConfig(cfg) : defaultFullsendAgentRows();
+        fullsendAgentRoles = [...new Set(agentsForAnalyze.map((a) => a.role))].sort();
+        const { reports } = await analyzeOrgInstallRollupLayers({
           org,
           gh,
-          agents: agentsFromConfig(cfg),
-          enabledRepos: enabledReposFromConfig(cfg),
+          agents: agentsForAnalyze,
         });
         if (signal.aborted || gen !== loadGen) return;
-        rollupStatus = rollup;
+        fullsendInstallReports = reports;
       } catch (e) {
         if (signal.aborted || gen !== loadGen) return;
-        layersError =
-          e instanceof Error ? e.message : "Failed to analyze Fullsend deployment status.";
-        rollupStatus = "unknown";
+        fullsendInstallError =
+          e instanceof Error ? e.message : "Failed to load .fullsend install status.";
       }
-    } else {
-      rollupStatus = "not_installed";
+      /** End “checking” as soon as install rollup returns — do not wait for full org repo pagination. */
+      if (gen === loadGen) {
+        fullsendInstallPending = false;
+      }
+
+      const githubNames: string[] = [];
+      try {
+        for await (const res of octokit.paginate.iterator(
+          octokit.repos.listForOrg,
+          { org, per_page: 100, type: "all" },
+        )) {
+          if (signal.aborted || gen !== loadGen) return;
+          for (const r of res.data) {
+            if (r.name && r.name !== CONFIG_REPO_NAME) {
+              githubNames.push(r.name);
+            }
+          }
+        }
+      } catch (e) {
+        if (signal.aborted || gen !== loadGen) return;
+        pageError =
+          e instanceof Error ? e.message : "Failed to list organisation repositories.";
+        listLoading = false;
+        return;
+      }
+
+      const githubSet = new Set(githubNames);
+      githubNameSet = githubSet;
+      unionAll = sortedUnionRepoNames(githubNames, configRepoNames);
+      listLoading = false;
+    } finally {
+      if (gen === loadGen) {
+        if (listLoading) {
+          listLoading = false;
+        }
+        fullsendInstallPending = false;
+      }
     }
-    layersLoading = false;
   }
 
-  /** Load org dashboard whenever `org` or signed-in user changes. */
+  /**
+   * Drive `loadDashboard` from reactive `org` + `$githubUser` only — **not** nested
+   * `githubUser.subscribe` inside an `$effect`, which re-subscribed on unrelated parent re-renders
+   * and aborted in-flight work (nav bar updates were enough to wedge the tab).
+   */
   $effect(() => {
     const o = org;
-    const unsub = githubUser.subscribe((u) => {
-      if (!o) {
-        pageError = "Missing organisation.";
-        listLoading = false;
-        layersLoading = false;
-        return;
-      }
-      if (!u) {
-        loadAbort?.abort();
-        rowResolveAbort?.abort();
-        pageError = "Sign in to load this organisation.";
-        unionAll = [];
-        rollupStatus = null;
-        listLoading = false;
-        layersLoading = false;
-        rowUi = {};
-        return;
-      }
-      void loadDashboard();
-    });
+    const u = $githubUser;
+    if (!o) {
+      pageError = "Missing organisation.";
+      listLoading = false;
+      fullsendInstallPending = false;
+      setNavOrgContext(null);
+      return;
+    }
+    if (!u) {
+      loadAbort?.abort();
+      rowResolveAbort?.abort();
+      pageError = "Sign in to load this organisation.";
+      unionAll = [];
+      listLoading = false;
+      fullsendInstallPending = false;
+      fullsendInstallError = null;
+      fullsendInstallReports = null;
+      fullsendAgentRoles = [];
+      rowUi = {};
+      setNavOrgContext(null);
+      return;
+    }
+    void loadDashboard();
     return () => {
-      unsub();
       loadAbort?.abort();
       rowResolveAbort?.abort();
     };
@@ -300,34 +382,42 @@
     const o = org;
     const loading = listLoading;
     const err = pageError;
-    const slice = displayedRepos;
+    const all = unionAll;
+    const q = search;
     const cfg = parsedConfig;
     const ghS = githubNameSet;
     const cS = configNameSet;
 
-    if (!o || loading || err || slice.length === 0) return;
-    if (!get(githubUser)) return;
+    if (!o || loading || err) return;
+    /** `$githubUser` so this effect re-runs when the store hydrates — matches OrgList.svelte. */
+    if (!$githubUser) return;
 
-    rowResolveAbort?.abort();
-    rowResolveAbort = new AbortController();
-    const sig = rowResolveAbort.signal;
-    void resolveRepoRows(slice, o, cfg, ghS, cS, sig);
+    const slice = filterRepoNamesBySearch(all, q).slice(0, DISPLAY_CAP);
+    if (slice.length === 0) return;
 
-    return () => rowResolveAbort?.abort();
-  });
-
-  /** UX account bar: org avatar + name to the right of the user cluster (same header as shell). */
-  $effect(() => {
-    const o = org;
-    if (!o) {
-      setNavOrgContext(null);
-      return;
-    }
-    setNavOrgContext({
-      login: o,
-      avatarUrl: orgAvatarUrl ?? orgGravatarFallback(o),
-      displayName: orgDisplayName,
+    const epoch = ++repoRowKickEpoch;
+    queueMicrotask(() => {
+      if (epoch !== repoRowKickEpoch) return;
+      const o2 = org;
+      if (!o2 || listLoading || pageError || !get(githubUser)) return;
+      const slice2 = filterRepoNamesBySearch(unionAll, search).slice(0, DISPLAY_CAP);
+      if (slice2.length === 0) return;
+      rowResolveAbort?.abort();
+      rowResolveAbort = new AbortController();
+      void resolveRepoRows(
+        slice2,
+        o2,
+        parsedConfig,
+        githubNameSet,
+        configNameSet,
+        rowResolveAbort.signal,
+      );
     });
+
+    return () => {
+      repoRowKickEpoch += 1;
+      rowResolveAbort?.abort();
+    };
   });
 
   onMount(() => {
@@ -372,53 +462,16 @@
       </div>
     {/if}
 
-    {#if layersError}
-      <div class="banner banner--err" role="alert">
-        <span class="banner-msg">{layersError}</span>
-        <button type="button" class="btn banner-retry" onclick={() => void loadDashboard()}>
-          Retry
-        </button>
-      </div>
-    {/if}
-
     <section class="pane pane-a" aria-labelledby="pane-a-h">
-      <h2 id="pane-a-h" class="pane-title">Fullsend status:</h2>
-      {#if layersLoading}
-        <div class="status-line" role="status" aria-live="polite" aria-busy="true">
-          <span class="row-spinner-disc" aria-hidden="true"></span>
-          <span>Checking</span>
-        </div>
-      {:else if rollupStatus === "installed"}
-        <div class="status-line">
-          <span class="status-dot status-dot--ok" aria-hidden="true"></span>
-          <span>Deployed</span>
-          <button type="button" class="btn" disabled title="Coming in a later task">Upgrade</button>
-          <a class="btn" href="#/org/{encodeURIComponent(org)}/setup">Repair</a>
-        </div>
-      {:else if rollupStatus === "degraded"}
-        <div class="status-line">
-          <span class="status-warn" aria-hidden="true">▲</span>
-          <span>Partially deployed / broken</span>
-          <a class="btn" href="#/org/{encodeURIComponent(org)}/setup">Repair</a>
-        </div>
-      {:else if rollupStatus === "not_installed"}
-        <div class="status-line">
-          <span class="status-warn" aria-hidden="true">▲</span>
-          <span>Partially deployed / broken</span>
-          <a class="btn" href="#/org/{encodeURIComponent(org)}/setup">Repair</a>
-        </div>
-      {:else if rollupStatus === "unknown"}
-        <div class="status-line">
-          <span class="status-warn" aria-hidden="true">▲</span>
-          <span>Partially deployed / broken</span>
-          <a class="btn" href="#/org/{encodeURIComponent(org)}/setup">Repair</a>
-        </div>
-      {:else}
-        <div class="status-line" role="status" aria-live="polite" aria-busy="true">
-          <span class="row-spinner-disc" aria-hidden="true"></span>
-          <span>Checking</span>
-        </div>
-      {/if}
+      <h2 id="pane-a-h" class="pane-title">Fullsend status</h2>
+      <FullsendOrgDashboardCard
+        {org}
+        pending={fullsendInstallPending}
+        error={fullsendInstallError}
+        reports={fullsendInstallReports}
+        roles={fullsendAgentRoles}
+        onRetry={() => void loadDashboard()}
+      />
     </section>
 
     <section class="pane pane-b" aria-labelledby="pane-b-h">
@@ -566,13 +619,6 @@
     font-size: 1rem;
     font-weight: 600;
   }
-  .status-line {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 0.5rem 0.75rem;
-    font-size: 0.95rem;
-  }
   .status-dot {
     display: inline-block;
     width: 0.65rem;
@@ -678,9 +724,6 @@
     display: inline-flex;
     align-items: center;
     box-sizing: border-box;
-  }
-  .banner-retry {
-    flex-shrink: 0;
   }
 
   .org-loading {

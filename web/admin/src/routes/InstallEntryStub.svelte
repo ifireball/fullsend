@@ -1,6 +1,7 @@
 <script lang="ts">
-  let { params = { org: "" } }: { params?: { org?: string } } = $props();
-  const org = $derived((params?.org ?? "").trim());
+  import { params as routeParams } from "svelte-spa-router";
+
+  const org = $derived(String(($routeParams as { org?: string } | undefined)?.org ?? "").trim());
 
   $effect(() => {
     const o = org;

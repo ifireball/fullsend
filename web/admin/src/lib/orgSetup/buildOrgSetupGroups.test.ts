@@ -3,6 +3,7 @@ import { RequestError } from "@octokit/request-error";
 import type { Octokit } from "@octokit/rest";
 import {
   buildOrgSetupGroups,
+  dashboardFullsendInstallCardViewModel,
   githubOrgAppSettingsUrl,
   installationRecordAppSlug,
   setupBoardTitlesFromAgents,
@@ -572,5 +573,38 @@ describe("buildOrgSetupGroups", () => {
     const app = groups.find((g) => g.kind === "github_app");
     expect(app?.primary).toBeNull();
     expect(app?.prerequisiteHint).not.toBeNull();
+  });
+});
+
+describe("dashboardFullsendInstallCardViewModel", () => {
+  it("omits the setup link when the install stack is fully installed", () => {
+    const reports: LayerReport[] = [
+      rep("config-repo", "installed"),
+      rep("workflows", "installed"),
+      rep("secrets", "installed"),
+      rep("dispatch-token", "installed"),
+    ];
+    const vm = dashboardFullsendInstallCardViewModel({
+      org: "acme",
+      reports,
+      roles: ["coder"],
+    });
+    expect(vm.linkLabel).toBeNull();
+  });
+
+  it("uses a primary setup link when the install stack is degraded", () => {
+    const reports: LayerReport[] = [
+      rep("config-repo", "installed"),
+      rep("workflows", "degraded"),
+      rep("secrets", "installed"),
+      rep("dispatch-token", "installed"),
+    ];
+    const vm = dashboardFullsendInstallCardViewModel({
+      org: "acme",
+      reports,
+      roles: ["coder"],
+    });
+    expect(vm.linkPrimary).toBe(true);
+    expect(vm.setupHref).toBe("#/org/acme/setup");
   });
 });
