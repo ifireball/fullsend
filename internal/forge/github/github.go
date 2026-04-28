@@ -1082,14 +1082,13 @@ func (c *LiveClient) GetPullRequestHeadSHA(ctx context.Context, owner, repo stri
 	if err != nil {
 		return "", fmt.Errorf("get pull request #%d: %w", number, err)
 	}
-	defer resp.Body.Close()
 
 	var pr struct {
 		Head struct {
 			SHA string `json:"sha"`
 		} `json:"head"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&pr); err != nil {
+	if err := decodeJSON(resp, &pr); err != nil {
 		return "", fmt.Errorf("decode pull request #%d: %w", number, err)
 	}
 	return pr.Head.SHA, nil
