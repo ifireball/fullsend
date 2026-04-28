@@ -577,6 +577,7 @@ func bootstrapSandbox(sshConfigPath, sandboxName, repoDir string, h *harness.Har
 
 	// Host-side scan (Path A): check agent definition and skills for injection
 	// before copying into sandbox. Complements the in-sandbox scan (Path B).
+	// Uses stderr (not printer) because bootstrapSandbox has no printer param.
 	var scanPipeline *security.Pipeline
 	if h.SecurityEnabled() {
 		scanPipeline = security.InputPipeline()
@@ -614,6 +615,7 @@ func bootstrapSandbox(sshConfigPath, sandboxName, repoDir string, h *harness.Har
 	for _, skillPath := range h.Skills {
 		if scanPipeline != nil {
 			// Try common casings — Linux filesystems are case-sensitive.
+			// Keep in sync with security.ScannableFiles["skill.md"].
 			var skillContent []byte
 			for _, name := range []string{"SKILL.md", "skill.md", "Skill.md"} {
 				if c, err := os.ReadFile(filepath.Join(skillPath, name)); err == nil {
@@ -899,6 +901,7 @@ func buildScanContextCommand(repoDir, traceID string) string {
 	)
 }
 
+// relOrAbs returns path relative to base, falling back to the absolute path if Rel fails.
 func relOrAbs(base, path string) string {
 	rel, err := filepath.Rel(base, path)
 	if err != nil {
