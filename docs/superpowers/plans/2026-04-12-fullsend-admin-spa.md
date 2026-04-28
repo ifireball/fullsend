@@ -1097,6 +1097,8 @@ git commit -m "feat(admin): org detail with repo/config union"
 
 ### Task 13: Org setup route — flat group board, dependency hints, read-only analyze (no mutations)
 
+**Status (2026-04-28):** **Complete** in repo: route wiring + alias (`#/org/:org/setup`, `#/install/:org` redirect), dependency/prerequisite logic (`groupOrder.ts`), group mapping/model (`buildOrgSetupGroups.ts` via `mapAnalyzeToGroups.ts` export), and flat setup screen shell (`OrgSetup.svelte`) with read-only loading states.
+
 **Goal:** Ship the **single-screen** org **install + repair** shell at `#/org/:login/setup` per [2026-04-26 org setup spec](../specs/2026-04-26-admin-spa-org-setup-install-repair-screen-design.md): **interaction-first** groups (typically **one card per agent GitHub App** that needs a github.com flow + **one automation group** for API-only bundle), **one primary button slot** per group (disabled with short label until actionable), **prerequisite** copy **under the group title** when blocked, **rollup** idle icons + headlines fed from existing `analyzeOrgLayers` / `LayerReport` data. Implement **read-only loading** state (spinner in rollup, grey unknown item lines, primary disabled, **no** Abort) per spec **Loading and in-flight states → Read-only loading**. **No** mutating `Install` yet (Task 14).
 
 **UX / architecture cross-links:** [Organisation selection](../specs/2026-04-21-fullsend-admin-spa-ux-design.md#screen-organisation-selection) / [Organisation dashboard](../specs/2026-04-21-fullsend-admin-spa-ux-design.md#screen-organisation-dashboard) entry buttons route here; [Section 4](../specs/2026-04-06-fullsend-admin-spa-design.md#section-4--wizards-onboard-repair-uninstall-agent-apps-secrets) remains the source for **staging** / **GitHub interrupt** expectations when Task 14 wires real flows.
@@ -1182,6 +1184,9 @@ git commit -m "feat(admin): org setup flat screen shell and analyze wiring"
 ---
 
 ### Task 14: Org setup — mutating automation bundle, app GitHub flows, in-flight + Abort
+
+**Status (2026-04-28):** **Mostly complete** in repo: in-flight apply UI + **Abort** + retry on the `.fullsend` card (`OrgSetup.svelte`), automation mutation orchestration (`applyFullsendRepoSetup.ts`), GitHub App create/install flows (`agentAppManifest.ts` + OAuth return handoff), and dispatch PAT save/write flow (`setupStorage.ts`, org/repo secret writers).  
+**Open follow-ups:** align plan naming (`automationApply.ts`/`.test.ts`) with current implementation and add dedicated orchestrator tests; optionally clear org-setup staged artifacts on sign-out if policy remains “always clear on sign-out” versus current “persist until applied” docs.
 
 **Goal:** Implement **primary** actions: **automation group** runs **idempotent** GitHub API work (mirror `internal/cli/admin.go` + `internal/layers/*` `Install` ordering **inside the bundle only**—user-visible order stays interaction-first per Task 13). **No** modal **Confirm** before automation run: on-screen `wouldFix` / item list is the review per [2026-04-26 spec § Relation to companion “final review”](../specs/2026-04-26-admin-spa-org-setup-install-repair-screen-design.md#relation-to-companion-final-review). **In-flight apply** per spec: rollup **spinner** + phase headline, items **queued / in progress / done / failed**, sole primary = **Abort** until finished; after abort or completion, return to idle with accurate per-item rows + **Retry** on same button slot if failures. **GitHub-pending** app groups: instructional rollup + **Continue** / **Open GitHub** (not API spinner) unless polling.
 
@@ -1290,7 +1295,7 @@ git commit -m "docs: admin SPA local development checklist"
 
 **2. Placeholder scan**
 
-No TBD/TODO strings. **Complete (2026-04-20 plan refresh):** Tasks **1**, **2**, **2b**, **3**, **4**, **4b** (Step 6 callback URL checklist ongoing), **5**, **6**, **7**. **Task 12 (2026-04-26):** org dashboard + repo/config union (read-only). **Open:** **13–14** (org setup flat screen per **2026-04-26** spec—replaces former linear wizard tasks), **15** (preview OAuth redesign), **16** (local dev doc), **4b** Step 6.
+No TBD/TODO strings. **Complete (2026-04-28 refresh):** Tasks **1**, **2**, **2b**, **3**, **4**, **4b** (except Step 6 maintainer checklist), **5**, **6**, **7**, **9**, **10**, **11**, **12**, **13**. **Task 14:** mostly complete in code; follow-up remains for dedicated automation orchestrator test coverage / naming alignment. **Open:** **15** (preview OAuth redesign), **16** (local dev doc), **4b** Step 6.
 
 **3. Type consistency**
 
