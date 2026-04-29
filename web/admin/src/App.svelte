@@ -11,6 +11,7 @@
   import {
     completeGithubOAuthFromHandoff,
     consumeOAuthParamsFromDocumentUrl,
+    SIGNING_IN_CANCELLED_MESSAGE,
     startGithubSignIn,
   } from "./lib/auth/oauth";
 
@@ -20,28 +21,51 @@
 
   let oauthErr = $state<string | null>(null);
 
+  /** Aborts in-flight OAuth completion (Turnstile + token exchange) on unmount. */
+  let oauthBootAbort: AbortController | null = null;
+  /** Bumps on each mount cleanup so a disposed boot’s `finally` cannot clear a newer mount’s boot state. */
+  let oauthBootSeq = 0;
+
   onMount(() => {
     const onGithub401 = () => signOut();
     window.addEventListener("fullsend:github-unauthorized", onGithub401);
+
+    const seq = (oauthBootSeq += 1);
+    authBootPending.set(true);
+
+    oauthBootAbort = new AbortController();
+    const signal = oauthBootAbort.signal;
 
     void (async () => {
       try {
         const hadOAuthReturn = consumeOAuthParamsFromDocumentUrl();
         if (hadOAuthReturn) {
-          const result = await completeGithubOAuthFromHandoff();
+          const result = await completeGithubOAuthFromHandoff({ signal });
+          if (signal.aborted) return;
           if (!result.ok) {
-            oauthErr = result.error;
+            if (result.error !== SIGNING_IN_CANCELLED_MESSAGE) {
+              oauthErr = result.error;
+            }
+          } else {
+            oauthErr = null;
           }
           return;
         }
         await refreshSession();
       } finally {
-        authBootPending.set(false);
+        if (seq === oauthBootSeq) {
+          authBootPending.set(false);
+        }
       }
     })();
 
-    return () =>
+    return () => {
       window.removeEventListener("fullsend:github-unauthorized", onGithub401);
+      oauthBootAbort?.abort();
+      oauthBootAbort = null;
+      oauthBootSeq += 1;
+      authBootPending.set(false);
+    };
   });
 </script>
 

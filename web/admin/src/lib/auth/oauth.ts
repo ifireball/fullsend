@@ -1,7 +1,7 @@
 import { challengeS256, randomVerifier } from "./pkce";
 import { refreshSession } from "./session";
 import { obtainTurnstileToken } from "./turnstile";
-import { saveToken } from "./tokenStore";
+import { clearSession, saveToken } from "./tokenStore";
 
 const PKCE_VERIFIER_KEY = "fullsend_admin_pkce_verifier";
 const OAUTH_STATE_KEY = "fullsend_admin_oauth_state";
@@ -147,11 +147,66 @@ export type OAuthCompleteResult =
   | { ok: true }
   | { ok: false; error: string };
 
+/** Returned when `AbortSignal` aborts during `completeGithubOAuthFromHandoff` (e.g. unmount). */
+export const SIGNING_IN_CANCELLED_MESSAGE =
+  "Signing in was cancelled." as const;
+
+export type CompleteGithubOAuthOptions = {
+  /** When aborted, Turnstile + token exchange are skipped. */
+  signal?: AbortSignal;
+};
+
+function isAbortError(e: unknown): boolean {
+  return e instanceof DOMException && e.name === "AbortError";
+}
+
+/**
+ * Reads JSON from a `fetch` `Response` while honoring `AbortSignal` (unlike `res.json()` alone).
+ * Malformed JSON yields `{}` unless the read was aborted.
+ */
+async function readJsonBodyWithSignal(
+  res: Response,
+  signal?: AbortSignal,
+): Promise<Record<string, unknown>> {
+  if (!signal) {
+    return (await res.json().catch(() => ({}))) as Record<string, unknown>;
+  }
+  if (signal.aborted) {
+    throw new DOMException("Aborted", "AbortError");
+  }
+
+  let rejectAbort!: (e: DOMException) => void;
+  const abortPromise = new Promise<never>((_, reject) => {
+    rejectAbort = reject;
+  });
+  const onAbort = () =>
+    rejectAbort(new DOMException("Aborted", "AbortError"));
+  signal.addEventListener("abort", onAbort, { once: true });
+
+  try {
+    const raw = await Promise.race([
+      res.json().catch(() => ({})),
+      abortPromise,
+    ]);
+    if (signal.aborted) {
+      throw new DOMException("Aborted", "AbortError");
+    }
+    return raw as Record<string, unknown>;
+  } finally {
+    signal.removeEventListener("abort", onAbort);
+  }
+}
+
 /**
  * Completes GitHub OAuth using a one-shot document handoff (see
  * `consumeOAuthParamsFromDocumentUrl`). Call only after URL cleanup.
  */
-export async function completeGithubOAuthFromHandoff(): Promise<OAuthCompleteResult> {
+export async function completeGithubOAuthFromHandoff(
+  options?: CompleteGithubOAuthOptions,
+): Promise<OAuthCompleteResult> {
+  const signal = options?.signal;
+  const aborted = () => Boolean(signal?.aborted);
+
   const handoff = takeDocHandoff();
   if (!handoff) {
     return { ok: false, error: "Missing OAuth handoff — try signing in again." };
@@ -187,9 +242,12 @@ export async function completeGithubOAuthFromHandoff(): Promise<OAuthCompleteRes
 
   let turnstile_token: string;
   try {
-    turnstile_token = await obtainTurnstileToken(expanded.k);
+    turnstile_token = await obtainTurnstileToken(expanded.k, signal);
   } catch (e) {
     clearOAuthState();
+    if (isAbortError(e)) {
+      return { ok: false, error: SIGNING_IN_CANCELLED_MESSAGE };
+    }
     return {
       ok: false,
       error:
@@ -197,6 +255,11 @@ export async function completeGithubOAuthFromHandoff(): Promise<OAuthCompleteRes
           ? e.message
           : "Turnstile verification failed — try signing in again.",
     };
+  }
+
+  if (aborted()) {
+    clearOAuthState();
+    return { ok: false, error: SIGNING_IN_CANCELLED_MESSAGE };
   }
 
   let res: Response;
@@ -210,9 +273,13 @@ export async function completeGithubOAuthFromHandoff(): Promise<OAuthCompleteRes
         code_verifier: verifier,
         turnstile_token,
       }),
+      signal,
     });
   } catch (e) {
     clearOAuthState();
+    if (isAbortError(e)) {
+      return { ok: false, error: SIGNING_IN_CANCELLED_MESSAGE };
+    }
     return {
       ok: false,
       error:
@@ -222,7 +289,22 @@ export async function completeGithubOAuthFromHandoff(): Promise<OAuthCompleteRes
     };
   }
 
-  const body = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+  let body: Record<string, unknown>;
+  try {
+    body = await readJsonBodyWithSignal(res, signal);
+  } catch (e) {
+    clearOAuthState();
+    if (isAbortError(e)) {
+      return { ok: false, error: SIGNING_IN_CANCELLED_MESSAGE };
+    }
+    return {
+      ok: false,
+      error:
+        e instanceof Error
+          ? e.message
+          : "Failed to read token exchange response.",
+    };
+  }
 
   if (!res.ok) {
     const desc =
@@ -255,6 +337,12 @@ export async function completeGithubOAuthFromHandoff(): Promise<OAuthCompleteRes
     expiresAt,
   });
   clearOAuthState();
+
+  if (aborted()) {
+    clearSession();
+    return { ok: false, error: SIGNING_IN_CANCELLED_MESSAGE };
+  }
+
   await refreshSession();
   return { ok: true };
 }

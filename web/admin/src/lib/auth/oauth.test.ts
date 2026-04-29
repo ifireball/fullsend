@@ -15,6 +15,7 @@ import {
   completeGithubOAuthFromHandoff,
   consumeOAuthParamsFromDocumentUrl,
   getOAuthRedirectUri,
+  SIGNING_IN_CANCELLED_MESSAGE,
   startGithubSignIn,
   tryParseWorkerExpandedOauthState,
 } from "./oauth";
@@ -283,7 +284,7 @@ describe("completeGithubOAuthFromHandoff", () => {
     const r = await completeGithubOAuthFromHandoff();
 
     expect(r).toEqual({ ok: true });
-    expect(obtainTurnstileToken).toHaveBeenCalledWith("site-key-1");
+    expect(obtainTurnstileToken).toHaveBeenCalledWith("site-key-1", undefined);
     expect(refreshSession).toHaveBeenCalledOnce();
     expect(loadToken()).toEqual({
       accessToken: "access-xyz",
@@ -334,5 +335,41 @@ describe("completeGithubOAuthFromHandoff", () => {
       tokenType: "Bearer",
       expiresAt: null,
     });
+  });
+
+  it("treats abort while reading token JSON as cancelled and clears OAuth state", async () => {
+    const nonce = "44444444-4444-4444-4444-444444444444";
+    const expanded = workerExpandedStateB64(nonce);
+    sessionStorage.setItem(
+      OAUTH_DOC_HANDOFF_KEY,
+      JSON.stringify({ code: "exchange-code", state: expanded }),
+    );
+    sessionStorage.setItem(OAUTH_STATE_KEY, nonce);
+    sessionStorage.setItem(PKCE_VERIFIER_KEY, "pkce-verifier-value");
+
+    const jsonNever = new Promise<object>(() => {
+      /* hang until aborted */
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: () => jsonNever,
+      } as unknown as Response),
+    );
+
+    const ac = new AbortController();
+    const p = completeGithubOAuthFromHandoff({ signal: ac.signal });
+    await Promise.resolve();
+    ac.abort();
+
+    const r = await p;
+    expect(r).toEqual({
+      ok: false,
+      error: SIGNING_IN_CANCELLED_MESSAGE,
+    });
+    expect(loadToken()).toBeNull();
+    expect(sessionStorage.getItem(OAUTH_STATE_KEY)).toBeNull();
   });
 });
