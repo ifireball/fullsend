@@ -7,12 +7,9 @@
   import { navOrgContext, setNavOrgContext } from "../lib/shell/navOrgContext";
   import { loadToken } from "../lib/auth/tokenStore";
   import { createUserOctokit } from "../lib/github/client";
+  import { runRepoOnboard, type OnboardRowKind } from "../lib/enrollment/runRepoOnboard";
   import { analyzeOrgInstallRollupLayers } from "../lib/layers/analyzeOrg";
-  import {
-    CONFIG_FILE_PATH,
-    CONFIG_REPO_NAME,
-    SHIM_WORKFLOW_PATH,
-  } from "../lib/layers/constants";
+  import { CONFIG_FILE_PATH, CONFIG_REPO_NAME } from "../lib/layers/constants";
   import { createLayerGithub } from "../lib/layers/githubClient";
   import {
     agentsFromConfig,
@@ -23,6 +20,7 @@
   } from "../lib/layers/orgConfigParse";
   import FullsendOrgDashboardCard from "../lib/orgSetup/FullsendOrgDashboardCard.svelte";
   import type { LayerReport } from "../lib/status/types";
+  import { evaluateManagedRepoRowStatus } from "../lib/repos/managedRepoRowStatus";
   import {
     classifyRepoUnionKind,
     filterRepoNamesBySearch,
@@ -72,11 +70,13 @@
     | { kind: "R6" }
     | { kind: "R7" }
     | { kind: "R1" }
+    | { kind: "R2"; prNumber: number; prUrl: string }
     | { kind: "R4" }
     | { kind: "config_disabled" }
     | { kind: "row_error"; message: string };
 
   let rowUi = $state<Record<string, RepoRowUi>>({});
+  let onboardingRepo = $state<string | null>(null);
 
   const filteredUnion = $derived(filterRepoNamesBySearch(unionAll, search));
   const displayedRepos = $derived(filteredUnion.slice(0, DISPLAY_CAP));
@@ -180,18 +180,50 @@
 
     for (const name of needShim) {
       if (signal.aborted) return;
-      try {
-        const body = await gh.getRepoFileUtf8(orgName, name, SHIM_WORKFLOW_PATH);
-        if (signal.aborted) return;
-        next[name] = { kind: body !== null ? "R4" : "R1" };
-      } catch (e) {
-        if (signal.aborted) return;
-        next[name] = {
-          kind: "row_error",
-          message: e instanceof Error ? e.message : "Failed to evaluate repository.",
-        };
-      }
+      const resolved = await evaluateManagedRepoRowStatus(orgName, name, gh, octokit, signal);
+      if (signal.aborted) return;
+      next[name] = resolved;
       rowUi = { ...rowUi, ...next };
+    }
+  }
+
+  async function onboardRepo(repoName: string, rowKind: OnboardRowKind): Promise<void> {
+    const token = loadToken()?.accessToken;
+    const cfg = parsedConfig;
+    if (!token || !org) return;
+    if ((rowKind === "R6" || rowKind === "config_disabled") && !cfg) return;
+
+    onboardingRepo = repoName;
+    rowUi = { ...rowUi, [repoName]: { kind: "loading" } };
+    try {
+      const octokit = createUserOctokit(token);
+      if (!cfg) {
+        throw new Error(
+          "No Fullsend configuration is loaded. Ensure the .fullsend repository has a valid config.yaml.",
+        );
+      }
+      const pr = await runRepoOnboard({
+        octokit,
+        org,
+        repoName,
+        parsedConfig: cfg,
+        rowKind,
+      });
+      rowUi = {
+        ...rowUi,
+        [repoName]: { kind: "R2", prNumber: pr.number, prUrl: pr.html_url },
+      };
+      void loadDashboard();
+    } catch (e) {
+      rowUi = {
+        ...rowUi,
+        [repoName]: {
+          kind: "row_error",
+          message: e instanceof Error ? e.message : String(e),
+        },
+      };
+    } finally {
+      onboardingRepo = null;
     }
   }
 
@@ -426,24 +458,16 @@
 
   async function retryRow(name: string): Promise<void> {
     const token = loadToken()?.accessToken;
-    if (!token) return;
-    const cfg = parsedConfig;
-    if (!cfg || !isRepoEnabledInConfig(cfg, name)) return;
-    const octokit = createUserOctokit(token);
-    const gh = createLayerGithub(octokit);
-    rowUi = { ...rowUi, [name]: { kind: "loading" } };
-    try {
-      const body = await gh.getRepoFileUtf8(org, name, SHIM_WORKFLOW_PATH);
-      rowUi = { ...rowUi, [name]: { kind: body !== null ? "R4" : "R1" } };
-    } catch (e) {
-      rowUi = {
-        ...rowUi,
-        [name]: {
-          kind: "row_error",
-          message: e instanceof Error ? e.message : "Failed to evaluate repository.",
-        },
-      };
-    }
+    if (!token || !org) return;
+    const ac = new AbortController();
+    await resolveRepoRows(
+      [name],
+      org,
+      parsedConfig,
+      githubNameSet,
+      configNameSet,
+      ac.signal,
+    );
   }
 </script>
 
@@ -531,7 +555,14 @@
                 {:else if ui.kind === "R6"}
                   <span class="info-ico" aria-hidden="true">ⓘ</span>
                   <span class="trail-label">Not in Fullsend config</span>
-                  <button type="button" class="btn btn-primary" disabled>Onboard</button>
+                  <button
+                    type="button"
+                    class="btn btn-primary"
+                    disabled={onboardingRepo !== null || parsedConfig === null}
+                    onclick={() => void onboardRepo(name, "R6")}
+                  >
+                    Onboard
+                  </button>
                 {:else if ui.kind === "R7"}
                   <span class="status-warn" aria-hidden="true">▲</span>
                   <span class="trail-label">Repository missing</span>
@@ -553,14 +584,37 @@
                   </div>
                   <button type="button" class="btn btn-danger" disabled>Remove from config</button>
                 {:else if ui.kind === "R1"}
-                  <button type="button" class="btn btn-primary" disabled>Onboard</button>
+                  <button
+                    type="button"
+                    class="btn btn-primary"
+                    disabled={onboardingRepo !== null}
+                    onclick={() => void onboardRepo(name, "R1")}
+                  >
+                    Onboard
+                  </button>
+                {:else if ui.kind === "R2"}
+                  <span class="status-dot status-dot--pending" aria-hidden="true"></span>
+                  <span class="trail-label">
+                    Onboarding — check <a
+                      class="pr-link"
+                      href={ui.prUrl}
+                      target="_blank"
+                      rel="noopener noreferrer">PR #{ui.prNumber}</a>
+                  </span>
                 {:else if ui.kind === "R4"}
                   <span class="status-dot status-dot--ok" aria-hidden="true"></span>
                   <span class="trail-label">Onboarded</span>
                   <button type="button" class="btn btn-danger" disabled>Remove</button>
                 {:else if ui.kind === "config_disabled"}
                   <span class="trail-muted">In config (not enabled)</span>
-                  <button type="button" class="btn btn-primary" disabled>Onboard</button>
+                  <button
+                    type="button"
+                    class="btn btn-primary"
+                    disabled={onboardingRepo !== null}
+                    onclick={() => void onboardRepo(name, "config_disabled")}
+                  >
+                    Onboard
+                  </button>
                 {:else if ui.kind === "row_error"}
                   {@const eid = `re-${safePopoverToken(name)}`}
                   <div class="row-err">
@@ -628,6 +682,19 @@
   }
   .status-dot--ok {
     background: #1a7f37;
+  }
+  .status-dot--pending {
+    background: #9a6700;
+  }
+  .pr-link {
+    color: #0969da;
+    font-weight: 600;
+    text-decoration: underline;
+  }
+  .pr-link:focus-visible {
+    outline: 2px solid #0969da;
+    outline-offset: 2px;
+    border-radius: 2px;
   }
   .status-warn {
     color: #9a6700;
