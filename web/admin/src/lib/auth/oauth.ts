@@ -66,7 +66,8 @@ function base64UrlToUtf8(s: string): string {
 
 /**
  * Parses Worker-built OAuth `state` (base64url JSON `{ v, n, k, g? }`). Returns `null` for malformed
- * values or payloads that are not Worker-expanded state.
+ * values or payloads that are not Worker-expanded state. Optional `g` is dropped when it fails slug
+ * validation so a misconfigured Worker cannot block sign-in.
  */
 export function tryParseWorkerExpandedOauthState(
   stateParam: string,
@@ -87,8 +88,8 @@ export function tryParseWorkerExpandedOauthState(
     if ("g" in r) {
       if (typeof r.g !== "string") return null;
       const gt = normalizeSlug(r.g);
-      if (!gt) return null;
-      g = gt;
+      if (gt) g = gt;
+      /* Invalid slug: omit g so sign-in still works (install link falls back to API slug). */
     }
     return g ? { v: 1, n, k, g } : { v: 1, n, k };
   } catch {

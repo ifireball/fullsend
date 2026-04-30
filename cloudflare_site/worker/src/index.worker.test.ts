@@ -466,6 +466,32 @@ describe("site worker admin API", () => {
     expect(o.g).toBe("test-fullsend-app");
   });
 
+  it("omits g from authorize state when GITHUB_APP_SLUG is not a valid slug", async () => {
+    const redirect = "http://localhost:5173/admin/";
+    const url = authorizeUrl(redirect);
+    const req = new IncomingRequest(url, {
+      method: "GET",
+      headers: { Origin: new URL(redirect).origin },
+    });
+    const ctx = createExecutionContext();
+    const envWithBadSlug = { ...env, GITHUB_APP_SLUG: "bad/slug" };
+    const res = await worker.fetch(req, envWithBadSlug, ctx);
+    await waitOnExecutionContext(ctx);
+    expect(res.status).toBe(302);
+    const loc = res.headers.get("Location");
+    expect(loc).toBeTruthy();
+    const gh = new URL(loc!);
+    const state = gh.searchParams.get("state");
+    expect(state).toBeTruthy();
+    const pad = state!.length % 4 === 0 ? "" : "=".repeat(4 - (state!.length % 4));
+    const json = atob(state!.replace(/-/g, "+").replace(/_/g, "/") + pad);
+    const o = JSON.parse(json) as Record<string, unknown>;
+    expect(o.v).toBe(1);
+    expect(o.n).toBe("12345678");
+    expect(typeof o.k).toBe("string");
+    expect("g" in o).toBe(false);
+  });
+
   it("returns 400 missing_or_invalid_oauth_params on authorize when code_challenge_method is not S256", async () => {
     const redirect = "http://localhost:5173/admin/";
     const sp = new URLSearchParams({

@@ -88,9 +88,13 @@ describe("tryParseWorkerExpandedOauthState", () => {
     });
   });
 
-  it("returns null when g is present but not a valid slug", () => {
+  it("omits g when present but not a valid slug (sign-in still works)", () => {
     const b64 = workerExpandedStateB64("n1", "k1", "bad slug");
-    expect(tryParseWorkerExpandedOauthState(b64)).toBeNull();
+    expect(tryParseWorkerExpandedOauthState(b64)).toEqual({
+      v: 1,
+      n: "n1",
+      k: "k1",
+    });
   });
 });
 

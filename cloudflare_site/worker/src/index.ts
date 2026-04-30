@@ -47,6 +47,15 @@ const MAX_PKCE_CHALLENGE_LEN = 256;
 /** Max `state` sent to GitHub (expanded JSON + base64url including Turnstile site key). */
 const MAX_GITHUB_STATE_LEN = 4096;
 
+/** Same rule as SPA `installationOrgRows.normalizeSlug` — invalid values must not be put in `state`. */
+const GITHUB_APP_SLUG_IN_STATE_RE = /^[a-zA-Z0-9-]{1,99}$/;
+
+function normalizedGithubAppSlugForState(raw: string): string | null {
+  const s = raw.trim();
+  if (!s || !GITHUB_APP_SLUG_IN_STATE_RE.test(s)) return null;
+  return s;
+}
+
 function isAdminApiPath(pathname: string): boolean {
   return (
     pathname === "/api/oauth/authorize" ||
@@ -92,7 +101,8 @@ function base64UrlEncodeJson(obj: unknown): string {
 
 function buildGithubState(env: Env, clientNonce: string): string | null {
   const siteKey = (env.TURNSTILE_SITE_KEY ?? "").trim();
-  const appSlug = (env.GITHUB_APP_SLUG ?? "").trim();
+  const appSlugRaw = (env.GITHUB_APP_SLUG ?? "").trim();
+  const appSlug = appSlugRaw ? normalizedGithubAppSlugForState(appSlugRaw) : null;
   const payload: { v: 1; n: string; k: string; g?: string } = {
     v: 1,
     n: clientNonce,
