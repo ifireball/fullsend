@@ -41,6 +41,8 @@ The SPA **does not** embed the GitHub App OAuth **client id** at build time. Sig
 
 **Turnstile (required):** the Worker always folds the site key into GitHub’s `state` at authorize time; the SPA decodes it after redirect and runs an invisible Turnstile challenge before **`POST /api/oauth/token`**. Do **not** put Turnstile keys in the Vite build (`define` / `VITE_*`).
 
+**GitHub App slug (optional):** the org list uses **`GET /user/installations`** and prefers the **app slug** from that response for the “install app on GitHub” link. If the API does not include a slug, set optional **`GITHUB_APP_SLUG`** in the Worker environment (same shell as other Worker vars); the Worker adds it to OAuth **`state`** next to the Turnstile site key so the SPA can persist it after sign-in — still **no** `VITE_*` slug in the static bundle.
+
 The committed **`sample.env.local`** at the repository root lists **official Cloudflare dummy Turnstile keys** for local dev plus the GitHub App checklist; copy it to **`.env.local`** (and align **`.dev.vars`** if you store the secret there only).
 
 ## Production and CI (Cloudflare Workers)

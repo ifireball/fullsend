@@ -1,12 +1,17 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { githubUser } from "../lib/auth/session";
-  import { loadToken } from "../lib/auth/tokenStore";
+  import { loadGithubAppSlug, loadToken } from "../lib/auth/tokenStore";
+  import { githubAppInstallationsNewUrl } from "../lib/github/githubAppInstallLink";
   import {
     FetchOrgsError,
     fetchOrgsWithProgress,
   } from "../lib/orgs/fetchOrgs";
   import { filterOrgsBySearch, type OrgRow } from "../lib/orgs/filter";
+  import {
+    consumePendingOrgListRefresh,
+    setPendingOrgListRefreshAfterInstall,
+  } from "../lib/orgs/orgListPostInstallRefresh";
 
   /** Max visible rows after filter (matches UX spec). */
   const DISPLAY_CAP = 15;
@@ -21,6 +26,8 @@
   let loading = $state(false);
   let error = $state<string | null>(null);
   let emptyHint = $state<string | null>(null);
+  /** Slug for GitHub “install app” link: API result merged with OAuth-persisted slug. */
+  let resolvedAppSlug = $state<string | null>(null);
 
   /** Batched updates while the repo scan is still running (unfiltered growth from `onProgress`). */
   function commitDisplayedRowsFromScan(capped: OrgRow[], done: boolean): void {
@@ -69,9 +76,11 @@
       scanComplete = false;
       error = null;
       emptyHint = null;
+      resolvedAppSlug = null;
       loading = false;
       return;
     }
+    const forceRefresh = force || consumePendingOrgListRefresh();
     loadAbort?.abort();
     loadAbort = new AbortController();
     const signal = loadAbort.signal;
@@ -85,7 +94,7 @@
     scanComplete = false;
     try {
       const r = await fetchOrgsWithProgress(token, {
-        force,
+        force: forceRefresh,
         signal,
         onProgress: (orgs, meta) => {
           if (gen !== loadGeneration) return;
@@ -97,6 +106,7 @@
       if (gen !== loadGeneration) return;
       serverOrgs = r.orgs;
       emptyHint = r.emptyHint;
+      resolvedAppSlug = r.appSlugFromApi ?? loadGithubAppSlug();
       const capped = filterOrgsBySearch(r.orgs, search).slice(0, DISPLAY_CAP);
       commitDisplayedRowsFromScan(capped, true);
     } catch (e) {
@@ -108,6 +118,7 @@
       displayedOrgs = [];
       scanComplete = false;
       emptyHint = null;
+      resolvedAppSlug = null;
       if (e instanceof FetchOrgsError) {
         error = e.message;
       } else {
@@ -133,6 +144,7 @@
         scanComplete = false;
         error = null;
         emptyHint = null;
+        resolvedAppSlug = null;
         loading = false;
       }
     });
@@ -141,6 +153,10 @@
 
   const filteredAll = $derived(filterOrgsBySearch(serverOrgs, search));
   const showCapHint = $derived(filteredAll.length > DISPLAY_CAP);
+
+  const installAppHref = $derived(
+    githubAppInstallationsNewUrl((resolvedAppSlug ?? "").trim()),
+  );
 
   function orgAvatarUrl(login: string): string {
     return `https://github.com/${encodeURIComponent(login)}.png?size=64`;
@@ -208,6 +224,12 @@
         {#if serverOrgs.length === 0 && emptyHint}
           <p class="hint" role="note">{emptyHint}</p>
         {/if}
+        {#if serverOrgs.length === 0}
+          <p class="muted install-empty-extra">
+            If you expected organisations here, the Fullsend GitHub App may not be installed on
+            those orgs yet, or your account cannot see those installations.
+          </p>
+        {/if}
       {:else}
         <ul class="list">
           {#each displayedOrgs as o (o.login)}
@@ -247,6 +269,30 @@
         {/if}
       {/if}
     {/if}
+
+    <div class="install-app-block" aria-labelledby="install-app-h">
+      <h2 id="install-app-h" class="install-app-heading">GitHub App on your organisations</h2>
+      <p class="install-app-copy">
+        Deploying or configuring Fullsend for an organisation requires the Fullsend GitHub App to be
+        installed on that organisation so we can act on your behalf.
+      </p>
+      {#if installAppHref}
+        <a
+          class="btn btn-primary install-app-link"
+          href={installAppHref}
+          target="_blank"
+          rel="noopener noreferrer"
+          onclick={() => setPendingOrgListRefreshAfterInstall()}
+        >
+          Add the Fullsend app on GitHub
+        </a>
+      {:else}
+        <p class="muted install-app-unavailable">
+          Install link is unavailable (app slug not known). Your operator can set
+          <code>GITHUB_APP_SLUG</code> on the site Worker or ensure installations return a slug.
+        </p>
+      {/if}
+    </div>
   {/if}
 </section>
 
@@ -442,5 +488,41 @@
   }
   .banner-retry {
     flex-shrink: 0;
+  }
+  .install-empty-extra {
+    margin: 0 0 0.75rem;
+    font-size: 0.9rem;
+    line-height: 1.45;
+    max-width: 40rem;
+  }
+  .install-app-block {
+    margin-top: 1.25rem;
+    padding-top: 1rem;
+    border-top: 1px solid #d8dee4;
+  }
+  .install-app-heading {
+    margin: 0 0 0.5rem;
+    font-size: 1rem;
+    font-weight: 600;
+  }
+  .install-app-copy {
+    margin: 0 0 0.65rem;
+    font-size: 0.9rem;
+    line-height: 1.45;
+    color: #444;
+    max-width: 40rem;
+  }
+  .install-app-link {
+    text-decoration: none;
+    display: inline-flex;
+    align-items: center;
+  }
+  .install-app-unavailable {
+    margin: 0;
+    font-size: 0.88rem;
+    max-width: 40rem;
+  }
+  .install-app-unavailable code {
+    font-size: 0.85em;
   }
 </style>
