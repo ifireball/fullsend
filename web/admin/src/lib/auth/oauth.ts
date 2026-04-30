@@ -199,10 +199,6 @@ export type OAuthCompleteResult =
   | { ok: true }
   | { ok: false; error: string };
 
-/** Returned when `AbortSignal` aborts during `completeGithubOAuthFromHandoff` (e.g. unmount). */
-export const SIGNING_IN_CANCELLED_MESSAGE =
-  "Signing in was cancelled." as const;
-
 export type CompleteGithubOAuthOptions = {
   /** When aborted (unmount or “different account”), Turnstile + token exchange are skipped. */
   signal?: AbortSignal;

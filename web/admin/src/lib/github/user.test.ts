@@ -63,6 +63,7 @@ describe("fetchGitHubUser", () => {
     await expect(fetchGitHubUser("t")).resolves.toEqual({
       login: "u",
       name: null,
+      avatarUrl: "https://avatars.githubusercontent.com/u/1?v=4",
     });
   });
 
