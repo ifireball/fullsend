@@ -1,32 +1,38 @@
 import { createUserOctokit } from "../github/client";
-import { buildEmptyOrgsFromReposHint, headersToRecord } from "./emptyOrgListHint";
+import { buildEmptyInstallationsHint } from "./emptyOrgListHint";
 import type { OrgRow } from "./filter";
+import {
+  orgRowsAndSlugFromInstallations,
+  type MinimalInstallation,
+} from "./installationOrgRows";
 
-/** Smaller GitHub pages so the UI can paint orgs sooner than 100-repo chunks. */
-const REPOS_PER_PAGE = 25;
+const INSTALLATIONS_PER_PAGE = 30;
 
-/** Cap pages when paginating GET /user/repos. */
-const MAX_REPO_LIST_PAGES = 50;
+/** Cap pages when paginating `GET /user/installations`. */
+const MAX_INSTALLATION_LIST_PAGES = 20;
 
 export type FetchOrgsResult = {
   orgs: OrgRow[];
   /**
-   * When `orgs` is empty, explains likely causes from the repository scan
-   * (`GET /user/repos`).
+   * When `orgs` is empty after a **successful** installations scan, explains that no org
+   * installs were found (not HTTP error text).
    */
   emptyHint: string | null;
+  /** First app slug from installation payloads in page order, if any. */
+  appSlugFromApi: string | null;
 };
 
 export type FetchOrgsProgressMeta = {
   done: boolean;
-  /** Number of GitHub repo list pages processed so far. */
-  repoPagesFetched: number;
+  /** Number of GitHub installation list pages processed so far. */
+  installationPagesFetched: number;
 };
 
 let memoryCache: {
   token: string;
   orgs: OrgRow[];
   emptyHint: string | null;
+  appSlugFromApi: string | null;
 } | null = null;
 
 /** Clears the in-memory org list cache (call on sign-out or when switching accounts). */
@@ -56,36 +62,34 @@ function octokitErrorStatus(e: unknown): number {
   return 502;
 }
 
-function friendlyReposListHttpError(status: number, githubMessage: string): string {
+function friendlyInstallationsListHttpError(
+  status: number,
+  githubMessage: string,
+): string {
   if (status === 403) {
-    return "GitHub refused to list repositories (403). For classic OAuth, you may need the repo scope for private repositories. For a GitHub App, check repository permissions on the installation.";
+    return (
+      "GitHub refused to list app installations (403). " +
+      "The Fullsend GitHub App may need additional permissions, or your account cannot access installations. " +
+      "If you operate this deployment, check the app’s settings; otherwise ask an org admin to install the app."
+    );
   }
   if (status === 401) {
-    return "Could not load repositories — sign in again if your token expired.";
+    return "Could not list installations — sign in again if your token expired.";
   }
   return githubMessage;
 }
 
-function isOrganizationOwner(owner: unknown): owner is { login: string } {
-  if (!owner || typeof owner !== "object") return false;
-  const o = owner as Record<string, unknown>;
-  return (
-    o.type === "Organization" &&
-    typeof o.login === "string" &&
-    o.login.trim() !== ""
-  );
-}
-
-function sortedOrgRowsFromMap(orgLogins: Map<string, string>): OrgRow[] {
-  return [...orgLogins.values()]
-    .sort((a, b) => a.localeCompare(b))
-    .map((login) => ({ login }));
+function installationsFromPageData(data: unknown): MinimalInstallation[] {
+  if (!data || typeof data !== "object") return [];
+  const rec = data as Record<string, unknown>;
+  const raw = rec.installations;
+  if (!Array.isArray(raw)) return [];
+  return raw as MinimalInstallation[];
 }
 
 /**
- * Scans **`GET /user/repos`** page-by-page (`per_page` {@link REPOS_PER_PAGE}), calling
- * `onProgress` after each page with the cumulative unique organisation list so the UI can
- * paint early.
+ * Paginates **`GET /user/installations`**, calling `onProgress` after each page with the
+ * cumulative organisation list derived from **Organization** installations.
  */
 export async function fetchOrgsWithProgress(
   accessToken: string,
@@ -99,9 +103,9 @@ export async function fetchOrgsWithProgress(
     if (options.signal?.aborted) {
       throw new DOMException("Aborted", "AbortError");
     }
-    const { orgs, emptyHint } = memoryCache;
-    options.onProgress(orgs, { done: true, repoPagesFetched: 0 });
-    return { orgs, emptyHint };
+    const { orgs, emptyHint, appSlugFromApi } = memoryCache;
+    options.onProgress(orgs, { done: true, installationPagesFetched: 0 });
+    return { orgs, emptyHint, appSlugFromApi };
   }
 
   const octokit = createUserOctokit(accessToken);
@@ -110,19 +114,13 @@ export async function fetchOrgsWithProgress(
     if (options.signal?.aborted) {
       throw new DOMException("Aborted", "AbortError");
     }
+
     const iterator = octokit.paginate.iterator(
-      octokit.rest.repos.listForAuthenticatedUser,
-      {
-        per_page: REPOS_PER_PAGE,
-        affiliation: "owner,collaborator,organization_member",
-        sort: "full_name",
-      },
+      octokit.rest.apps.listInstallationsForAuthenticatedUser,
+      { per_page: INSTALLATIONS_PER_PAGE },
     );
 
-    let firstStatus = 200;
-    let firstHeaders: Record<string, string> = {};
-    const orgLogins = new Map<string, string>();
-    let repoTotal = 0;
+    const accumulated: MinimalInstallation[] = [];
     let pages = 0;
 
     for await (const page of iterator) {
@@ -130,57 +128,38 @@ export async function fetchOrgsWithProgress(
         throw new DOMException("Aborted", "AbortError");
       }
       pages += 1;
-      if (pages > MAX_REPO_LIST_PAGES) break;
+      if (pages > MAX_INSTALLATION_LIST_PAGES) break;
 
-      if (Object.keys(firstHeaders).length === 0) {
-        firstStatus = page.status;
-        firstHeaders = headersToRecord(page.headers);
-      }
+      accumulated.push(...installationsFromPageData(page.data));
 
-      const chunk = page.data;
-      if (!Array.isArray(chunk)) continue;
-
-      for (const repo of chunk) {
-        repoTotal += 1;
-        const owner = (repo as { owner?: unknown }).owner;
-        if (isOrganizationOwner(owner)) {
-          const login = owner.login.trim();
-          orgLogins.set(login.toLowerCase(), login);
-        }
-      }
-
-      const orgs = sortedOrgRowsFromMap(orgLogins);
-      options.onProgress(orgs, { done: false, repoPagesFetched: pages });
+      const { orgs, appSlug } = orgRowsAndSlugFromInstallations(accumulated);
+      options.onProgress(orgs, {
+        done: false,
+        installationPagesFetched: pages,
+      });
     }
 
-    const orgs = sortedOrgRowsFromMap(orgLogins);
-    const emptyHint =
-      orgs.length === 0
-        ? buildEmptyOrgsFromReposHint(
-            repoTotal,
-            orgLogins.size,
-            firstStatus,
-            firstHeaders,
-          )
-        : null;
+    const { orgs, appSlug } = orgRowsAndSlugFromInstallations(accumulated);
+    const emptyHint = orgs.length === 0 ? buildEmptyInstallationsHint() : null;
 
-    memoryCache = { token: accessToken, orgs, emptyHint };
-    options.onProgress(orgs, { done: true, repoPagesFetched: pages });
-    return { orgs, emptyHint };
+    memoryCache = {
+      token: accessToken,
+      orgs,
+      emptyHint,
+      appSlugFromApi: appSlug,
+    };
+    options.onProgress(orgs, { done: true, installationPagesFetched: pages });
+    return { orgs, emptyHint, appSlugFromApi: appSlug };
   } catch (e) {
     if (e instanceof DOMException && e.name === "AbortError") {
       throw e;
     }
     const status = octokitErrorStatus(e);
-    const msg = e instanceof Error ? e.message : "GitHub repository listing failed.";
-    throw new FetchOrgsError(status, friendlyReposListHttpError(status, msg));
+    const msg = e instanceof Error ? e.message : "GitHub installation listing failed.";
+    throw new FetchOrgsError(status, friendlyInstallationsListHttpError(status, msg));
   }
 }
 
-/**
- * Builds the org picker from **`GET /user/repos`**: unique GitHub **Organization** owners among
- * repositories the user may access (owner, collaborator, organization_member).
- */
 export async function fetchOrgs(
   accessToken: string,
   options?: { force?: boolean; signal?: AbortSignal },

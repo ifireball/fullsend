@@ -18,30 +18,38 @@ function mockOctokit(iterator: () => AsyncIterableIterator<unknown>) {
       iterator: vi.fn(iterator),
     },
     rest: {
-      repos: {
-        listForAuthenticatedUser: {},
+      apps: {
+        listInstallationsForAuthenticatedUser: {},
       },
     },
   } as never);
 }
 
-describe("fetchOrgs", () => {
+describe("fetchOrgs (installations)", () => {
   beforeEach(() => {
     clearOrgListMemoryCache();
     vi.mocked(createUserOctokit).mockReset();
   });
 
-  it("returns unique organisation owners sorted by login", async () => {
+  it("maps Organization installations and returns appSlugFromApi", async () => {
     mockOctokit(() =>
       (async function* () {
         yield {
           status: 200,
-          headers: new Headers(),
-          data: [
-            { owner: { type: "Organization", login: "zebra" } },
-            { owner: { type: "Organization", login: "alpha" } },
-            { owner: { type: "Organization", login: "alpha" } },
-          ],
+          data: {
+            installations: [
+              {
+                id: 1,
+                app_slug: "fullsend-app",
+                account: { login: "zebra", type: "Organization" },
+              },
+              {
+                id: 2,
+                app_slug: "fullsend-app",
+                account: { login: "alpha", type: "Organization" },
+              },
+            ],
+          },
         };
       })(),
     );
@@ -49,15 +57,19 @@ describe("fetchOrgs", () => {
     const r = await fetchOrgs("token", { force: true });
     expect(r.orgs.map((o) => o.login)).toEqual(["alpha", "zebra"]);
     expect(r.emptyHint).toBeNull();
+    expect(r.appSlugFromApi).toBe("fullsend-app");
   });
 
-  it("returns empty orgs with emptyHint when no organisation-owned repos", async () => {
+  it("returns emptyHint when no org installations", async () => {
     mockOctokit(() =>
       (async function* () {
         yield {
           status: 200,
-          headers: new Headers({ "x-oauth-scopes": "repo" }),
-          data: [{ owner: { type: "User", login: "someone" } }],
+          data: {
+            installations: [
+              { id: 1, account: { login: "alice", type: "User" } },
+            ],
+          },
         };
       })(),
     );
@@ -65,25 +77,22 @@ describe("fetchOrgs", () => {
     const r = await fetchOrgs("token", { force: true });
     expect(r.orgs).toEqual([]);
     expect(r.emptyHint).toBeTruthy();
-    expect(typeof r.emptyHint).toBe("string");
+    expect(r.appSlugFromApi).toBeNull();
   });
 
-  it("throws FetchOrgsError for non-401 HTTP failures", async () => {
-    mockOctokit(() => ({
-      [Symbol.asyncIterator]: () => ({
-        next: () =>
-          Promise.reject(Object.assign(new Error("Forbidden"), { status: 403 })),
-      }),
-    }));
+  it("throws FetchOrgsError for 403", async () => {
+    mockOctokit(() =>
+      (async function* () {
+        throw Object.assign(new Error("Forbidden"), { status: 403 });
+      })(),
+    );
 
-    try {
-      await fetchOrgs("token", { force: true });
-      expect.fail("expected rejection");
-    } catch (e) {
-      expect(e).toBeInstanceOf(FetchOrgsError);
-      expect((e as FetchOrgsError).status).toBe(403);
-      expect((e as FetchOrgsError).message).toContain("403");
-    }
+    await expect(fetchOrgs("token", { force: true })).rejects.toSatisfy(
+      (e: unknown) =>
+        e instanceof FetchOrgsError &&
+        e.status === 403 &&
+        e.message.includes("403"),
+    );
   });
 
   it("throws AbortError when signal is already aborted", async () => {
@@ -92,7 +101,7 @@ describe("fetchOrgs", () => {
 
     mockOctokit(() =>
       (async function* () {
-        yield { status: 200, headers: new Headers(), data: [] };
+        yield { status: 200, data: { installations: [] } };
       })(),
     );
 
@@ -101,29 +110,38 @@ describe("fetchOrgs", () => {
     ).rejects.toMatchObject({ name: "AbortError" });
   });
 
-  it("throws AbortError when aborted from onProgress mid-scan", async () => {
-    const ac = new AbortController();
-
+  it("calls onProgress with installationPagesFetched", async () => {
     mockOctokit(() =>
       (async function* () {
-        yield { status: 200, headers: new Headers(), data: [] };
-        await Promise.resolve();
         yield {
           status: 200,
-          headers: new Headers(),
-          data: [{ owner: { type: "Organization", login: "LateOrg" } }],
+          data: {
+            installations: [
+              { account: { login: "a", type: "Organization" }, app_slug: "x" },
+            ],
+          },
+        };
+        yield {
+          status: 200,
+          data: {
+            installations: [
+              { account: { login: "b", type: "Organization" }, app_slug: "x" },
+            ],
+          },
         };
       })(),
     );
 
-    await expect(
-      fetchOrgsWithProgress("token", {
-        force: true,
-        signal: ac.signal,
-        onProgress: () => {
-          ac.abort();
-        },
-      }),
-    ).rejects.toMatchObject({ name: "AbortError" });
+    const metas: { done: boolean; installationPagesFetched: number }[] = [];
+    await fetchOrgsWithProgress("token", {
+      force: true,
+      onProgress: (_orgs, meta) => {
+        metas.push({ ...meta });
+      },
+    });
+
+    expect(metas.length).toBeGreaterThanOrEqual(2);
+    expect(metas.at(-1)?.done).toBe(true);
+    expect(metas.at(-1)?.installationPagesFetched).toBe(2);
   });
 });
