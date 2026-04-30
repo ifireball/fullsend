@@ -29,7 +29,7 @@ export function slugFromInstallation(
 
 /**
  * Maps installation list to unique Organization rows (sorted by login) and the
- * first safe app slug found in array order (`app_slug`, else `app.slug`).
+ * first safe app slug found in array order (`app_slug` if valid, else `app.slug`).
  */
 export function orgRowsAndSlugFromInstallations(
   installations: MinimalInstallation[],
@@ -44,8 +44,10 @@ export function orgRowsAndSlugFromInstallations(
     }
     const acc = inst.account;
     if (!acc?.login || acc.type !== "Organization") continue;
-    if (!byLogin.has(acc.login)) {
-      byLogin.set(acc.login, { login: acc.login });
+    const login = acc.login.trim();
+    if (!login) continue;
+    if (!byLogin.has(login)) {
+      byLogin.set(login, { login });
     }
   }
 

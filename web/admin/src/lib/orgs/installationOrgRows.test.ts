@@ -1,7 +1,63 @@
 import { describe, it, expect } from "vitest";
-import { orgRowsAndSlugFromInstallations } from "./installationOrgRows";
+import {
+  normalizeSlug,
+  orgRowsAndSlugFromInstallations,
+  slugFromInstallation,
+} from "./installationOrgRows";
+
+describe("normalizeSlug", () => {
+  it("accepts alphanumeric and hyphens within length", () => {
+    expect(normalizeSlug("my-app-1")).toBe("my-app-1");
+  });
+
+  it("rejects empty and whitespace-only", () => {
+    expect(normalizeSlug("")).toBeNull();
+    expect(normalizeSlug("   ")).toBeNull();
+  });
+
+  it("rejects slashes dots and spaces inside slug", () => {
+    expect(normalizeSlug("bad/slug")).toBeNull();
+    expect(normalizeSlug("a.b")).toBeNull();
+    expect(normalizeSlug("bad slug")).toBeNull();
+  });
+
+  it("rejects over 99 chars", () => {
+    expect(normalizeSlug("a".repeat(100))).toBeNull();
+  });
+
+  it("rejects non-ASCII", () => {
+    expect(normalizeSlug("café-app")).toBeNull();
+  });
+});
+
+describe("slugFromInstallation", () => {
+  it("uses nested app.slug when app_slug is invalid", () => {
+    expect(
+      slugFromInstallation({
+        app_slug: "bad slug",
+        app: { slug: "good-slug" },
+      }),
+    ).toBe("good-slug");
+  });
+});
 
 describe("orgRowsAndSlugFromInstallations", () => {
+  it("returns empty orgs and null slug for empty input", () => {
+    expect(orgRowsAndSlugFromInstallations([])).toEqual({
+      orgs: [],
+      appSlug: null,
+    });
+  });
+
+  it("ignores installations with null account for rows but still reads slug", () => {
+    const { orgs, appSlug } = orgRowsAndSlugFromInstallations([
+      { account: null, app_slug: "only-slug" },
+      { account: { login: "o", type: "Organization" } },
+    ]);
+    expect(orgs).toEqual([{ login: "o" }]);
+    expect(appSlug).toBe("only-slug");
+  });
+
   it("returns Organization accounts sorted by login and appSlug from app_slug", () => {
     const { orgs, appSlug } = orgRowsAndSlugFromInstallations([
       {
