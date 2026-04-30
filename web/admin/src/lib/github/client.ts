@@ -17,9 +17,7 @@ export function createUserOctokit(accessToken: string): Octokit {
   octokit.hook.wrap("request", async (request, options) => {
     try {
       const response = await request(options as never);
-      if (response.status === 401) {
-        window.dispatchEvent(new CustomEvent("fullsend:github-unauthorized"));
-      }
+      // Octokit throws on 401 before returning; the branch below handles that.
       return response as OctokitResponse<unknown>;
     } catch (e: unknown) {
       const rec =
