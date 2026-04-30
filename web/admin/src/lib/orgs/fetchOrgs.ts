@@ -69,7 +69,7 @@ function friendlyInstallationsListHttpError(
   if (status === 403) {
     return (
       "GitHub refused to list app installations (403). " +
-      "The Fullsend GitHub App may need additional permissions, or your account cannot access installations. " +
+      "The Fullsend Admin app may need additional permissions, or your account cannot access installations. " +
       "If you operate this deployment, check the app’s settings; otherwise ask an org admin to install the app."
     );
   }
@@ -80,6 +80,8 @@ function friendlyInstallationsListHttpError(
 }
 
 function installationsFromPageData(data: unknown): MinimalInstallation[] {
+  // Octokit’s paginate iterator may expose either `{ installations: [...] }` or a bare array.
+  if (Array.isArray(data)) return data as MinimalInstallation[];
   if (!data || typeof data !== "object") return [];
   const rec = data as Record<string, unknown>;
   const raw = rec.installations;

@@ -73,6 +73,17 @@ describe("orgRowsAndSlugFromInstallations", () => {
     expect(appSlug).toBe("my-github-app");
   });
 
+  it("treats account type as organisation case-insensitively", () => {
+    const { orgs, appSlug } = orgRowsAndSlugFromInstallations([
+      {
+        account: { login: "lower-org", type: "organization" },
+        app_slug: "ci-app",
+      },
+    ]);
+    expect(orgs).toEqual([{ login: "lower-org" }]);
+    expect(appSlug).toBe("ci-app");
+  });
+
   it("drops User installations", () => {
     const { orgs, appSlug } = orgRowsAndSlugFromInstallations([
       {

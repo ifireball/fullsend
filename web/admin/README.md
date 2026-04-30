@@ -18,7 +18,7 @@ You can use any Node 22 + npm install without mise; put credentials in the envir
 
 ## GitHub App (OAuth)
 
-Create a **GitHub App** used for **user** sign-in to the admin UI (not the same as Fullsend agent apps):
+Create a **GitHub App** (“**Fullsend Admin**”) used for **user** sign-in to the admin UI (not the same as per-org Fullsend agent apps from deployment):
 
 1. GitHub → **Settings** → **Developer settings** → **GitHub Apps** → **New GitHub App** (or your org’s equivalent).
 2. **Homepage URL:** e.g. `http://localhost:5173` (or match your dev origin).

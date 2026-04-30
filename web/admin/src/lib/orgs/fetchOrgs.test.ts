@@ -31,6 +31,27 @@ describe("fetchOrgs (installations)", () => {
     vi.mocked(createUserOctokit).mockReset();
   });
 
+  it("maps installations when page.data is a bare array (paginator shape)", async () => {
+    mockOctokit(() =>
+      (async function* () {
+        yield {
+          status: 200,
+          data: [
+            {
+              id: 1,
+              app_slug: "fullsend-admin",
+              account: { login: "array-org", type: "Organization" },
+            },
+          ],
+        };
+      })(),
+    );
+
+    const r = await fetchOrgs("token", { force: true });
+    expect(r.orgs.map((o) => o.login)).toEqual(["array-org"]);
+    expect(r.appSlugFromApi).toBe("fullsend-admin");
+  });
+
   it("maps Organization installations and returns appSlugFromApi", async () => {
     mockOctokit(() =>
       (async function* () {

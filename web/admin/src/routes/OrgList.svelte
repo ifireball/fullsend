@@ -13,6 +13,19 @@
     setPendingOrgListRefreshAfterInstall,
   } from "../lib/orgs/orgListPostInstallRefresh";
 
+  /** Delays after an empty install list response for silent GitHub API rechecks (ms). */
+  const EMPTY_LIST_RECHECK_DELAYS_MS = [14_000, 32_000, 55_000] as const;
+
+  /** Abort stuck installation-list fetches so Refresh never stays disabled indefinitely. */
+  const ORG_LIST_FETCH_TIMEOUT_MS = 60_000;
+
+  type LoadOrgsOpts = {
+    /** When true and the list is still empty after success, schedule delayed rechecks. */
+    allowEmptyFollowUpPoll?: boolean;
+    /** True for scheduled rechecks: do not cancel sibling timers or bump the poll session. */
+    internalPoll?: boolean;
+  };
+
   /** Max visible rows after filter (matches UX spec). */
   const DISPLAY_CAP = 15;
   /** After this many rows, batch UI updates until +5 more or scan completes. */
@@ -28,6 +41,32 @@
   let emptyHint = $state<string | null>(null);
   /** Slug for GitHub “install app” link: API result merged with OAuth-persisted slug. */
   let resolvedAppSlug = $state<string | null>(null);
+
+  /** After the first completed fetch, manual refresh keeps the list on screen (no full-page blink). */
+  let hasCompletedOrgFetchOnce = $state(false);
+  /** True while a non-initial refresh is in flight (list not cleared). */
+  let inlineListRefresh = $state(false);
+  /** Epoch ms of last successful installations fetch (for user feedback). */
+  let listCheckAt = $state<number | null>(null);
+  /** Bumped on user-facing loads so delayed recheck callbacks from an older session no-op. */
+  let pollSession = 0;
+  let pollTimeouts: number[] = [];
+
+  function clearPollTimeouts(): void {
+    for (const id of pollTimeouts) clearTimeout(id);
+    pollTimeouts = [];
+  }
+
+  function scheduleEmptyListRechecks(): void {
+    const sid = pollSession;
+    for (const delayMs of EMPTY_LIST_RECHECK_DELAYS_MS) {
+      const id = window.setTimeout(() => {
+        if (pollSession !== sid) return;
+        void loadOrgs(true, { internalPoll: true });
+      }, delayMs);
+      pollTimeouts.push(id);
+    }
+  }
 
   /** Batched updates while the repo scan is still running (unfiltered growth from `onProgress`). */
   function commitDisplayedRowsFromScan(capped: OrgRow[], done: boolean): void {
@@ -65,34 +104,60 @@
   let loadGeneration = 0;
   let loadAbort: AbortController | null = null;
 
-  async function loadOrgs(force: boolean) {
+  async function loadOrgs(force: boolean, opts?: LoadOrgsOpts) {
     const token = loadToken()?.accessToken;
     if (!token) {
       loadAbort?.abort();
       loadAbort = null;
       loadGeneration += 1;
+      clearPollTimeouts();
+      pollSession += 1;
       serverOrgs = [];
       displayedOrgs = [];
       scanComplete = false;
       error = null;
       emptyHint = null;
       resolvedAppSlug = null;
+      hasCompletedOrgFetchOnce = false;
+      inlineListRefresh = false;
+      listCheckAt = null;
       loading = false;
       return;
     }
+
+    const internalPoll = opts?.internalPoll === true;
+    if (!internalPoll) {
+      clearPollTimeouts();
+      pollSession += 1;
+    }
+
     const forceRefresh = force || consumePendingOrgListRefresh();
     loadAbort?.abort();
     loadAbort = new AbortController();
     const signal = loadAbort.signal;
     const gen = (loadGeneration += 1);
 
+    const skipClearLists = force && hasCompletedOrgFetchOnce;
+    inlineListRefresh = skipClearLists;
+
     loading = true;
     error = null;
-    emptyHint = null;
-    serverOrgs = [];
-    displayedOrgs = [];
+    if (!skipClearLists) {
+      emptyHint = null;
+      serverOrgs = [];
+      displayedOrgs = [];
+    }
     scanComplete = false;
+
+    let fetchTimedOut = false;
+    let fetchTimeoutId: ReturnType<typeof setTimeout> | undefined;
+
     try {
+      fetchTimeoutId = window.setTimeout(() => {
+        fetchTimedOut = true;
+        loadAbort?.abort();
+      }, ORG_LIST_FETCH_TIMEOUT_MS);
+
       const r = await fetchOrgsWithProgress(token, {
         force: forceRefresh,
         signal,
@@ -109,13 +174,29 @@
       resolvedAppSlug = r.appSlugFromApi ?? loadGithubAppSlug();
       const capped = filterOrgsBySearch(r.orgs, search).slice(0, DISPLAY_CAP);
       commitDisplayedRowsFromScan(capped, true);
+      listCheckAt = Date.now();
+      if (
+        opts?.allowEmptyFollowUpPoll &&
+        r.orgs.length === 0 &&
+        !signal.aborted
+      ) {
+        scheduleEmptyListRechecks();
+      }
+      hasCompletedOrgFetchOnce = true;
     } catch (e) {
       if (gen !== loadGeneration) return;
       if (e instanceof DOMException && e.name === "AbortError") {
+        if (fetchTimedOut) {
+          error =
+            "Refreshing organisations timed out. Check your connection and try again.";
+          hasCompletedOrgFetchOnce = true;
+        }
         return;
       }
-      serverOrgs = [];
-      displayedOrgs = [];
+      if (!skipClearLists) {
+        serverOrgs = [];
+        displayedOrgs = [];
+      }
       scanComplete = false;
       emptyHint = null;
       resolvedAppSlug = null;
@@ -125,26 +206,36 @@
         error =
           e instanceof Error ? e.message : "Failed to load organisations.";
       }
+      hasCompletedOrgFetchOnce = true;
     } finally {
+      if (fetchTimeoutId !== undefined) {
+        clearTimeout(fetchTimeoutId);
+      }
       if (gen === loadGeneration) {
         loading = false;
+        inlineListRefresh = false;
       }
     }
   }
 
   onMount(() => {
     const unsub = githubUser.subscribe((u) => {
-      if (u) void loadOrgs(false);
+      if (u) void loadOrgs(false, { allowEmptyFollowUpPoll: true });
       else {
         loadAbort?.abort();
         loadAbort = null;
         loadGeneration += 1;
+        clearPollTimeouts();
+        pollSession += 1;
         serverOrgs = [];
         displayedOrgs = [];
         scanComplete = false;
         error = null;
         emptyHint = null;
         resolvedAppSlug = null;
+        hasCompletedOrgFetchOnce = false;
+        inlineListRefresh = false;
+        listCheckAt = null;
         loading = false;
       }
     });
@@ -161,6 +252,14 @@
   function orgAvatarUrl(login: string): string {
     return `https://github.com/${encodeURIComponent(login)}.png?size=64`;
   }
+
+  function formatListCheckTime(ts: number): string {
+    return new Date(ts).toLocaleTimeString(undefined, {
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+    });
+  }
 </script>
 
 <section class="orgs" aria-labelledby="orgs-h">
@@ -171,7 +270,7 @@
   {#if !$githubUser}
     <p class="muted">Sign in to load this list.</p>
   {:else}
-    {#if loading && serverOrgs.length === 0}
+    {#if loading && serverOrgs.length === 0 && !inlineListRefresh}
       <div class="org-loading" role="status" aria-live="polite" aria-busy="true">
         <div class="org-loading-spinner" aria-hidden="true"></div>
         <p class="org-loading-label">Loading organisations…</p>
@@ -192,13 +291,30 @@
         </label>
         <button
           type="button"
-          class="btn"
+          class="btn btn-refresh"
           disabled={loading}
-          onclick={() => void loadOrgs(true)}
+          aria-busy={loading}
+          onclick={() => void loadOrgs(true, { allowEmptyFollowUpPoll: true })}
         >
-          Refresh
+          {#if loading}
+            <span class="btn-refresh-spinner" aria-hidden="true"></span>
+          {/if}
+          <span>Refresh</span>
         </button>
       </div>
+
+      {#if listCheckAt != null && !error && !loading}
+        <p class="list-check-at" role="status">
+          {#if serverOrgs.length === 0}
+            Last checked at {formatListCheckTime(listCheckAt)}. If you just installed the app,
+            GitHub can take a minute or longer before it shows up here. After you use Refresh, this
+            page also rechecks a few times in the background while you stay on it.
+          {:else}
+            Organisations last refreshed at {formatListCheckTime(listCheckAt)}. Use Refresh after
+            you add or remove installs on GitHub; changes can take a short while to appear.
+          {/if}
+        </p>
+      {/if}
 
       {#if showCapHint}
         <p class="cap-hint" role="status">Showing up to 15 organisations</p>
@@ -210,25 +326,20 @@
           <button
             type="button"
             class="btn banner-retry"
-            onclick={() => void loadOrgs(true)}
+            onclick={() => void loadOrgs(true, { allowEmptyFollowUpPoll: true })}
           >
             Retry
           </button>
         </div>
       {:else if filteredAll.length === 0}
-        <p class="muted">
-          {serverOrgs.length === 0
-            ? "No organisations found for this account."
-            : "No matching organisations."}
-        </p>
-        {#if serverOrgs.length === 0 && emptyHint}
-          <p class="hint" role="note">{emptyHint}</p>
-        {/if}
         {#if serverOrgs.length === 0}
-          <p class="muted install-empty-extra">
-            If you expected organisations here, the Fullsend GitHub App may not be installed on
-            those orgs yet, or your account cannot see those installations.
-          </p>
+          {#if emptyHint}
+            <p class="hint hint--empty" role="note">{emptyHint}</p>
+          {:else}
+            <p class="muted">No organisations found for this account.</p>
+          {/if}
+        {:else}
+          <p class="muted">No matching organisations.</p>
         {/if}
       {:else}
         <ul class="list">
@@ -256,41 +367,61 @@
             </li>
           {/each}
         </ul>
-        {#if loading && displayedOrgs.length > 0}
-          <div
-            class="org-more-loading"
-            role="status"
-            aria-live="polite"
-            aria-busy="true"
-          >
-            <div class="org-more-spinner" aria-hidden="true"></div>
-            <span class="sr-only">Loading more organisations</span>
-          </div>
-        {/if}
       {/if}
     {/if}
 
     <div class="install-app-block" aria-labelledby="install-app-h">
-      <h2 id="install-app-h" class="install-app-heading">GitHub App on your organisations</h2>
-      <p class="install-app-copy">
-        Deploying or configuring Fullsend for an organisation requires the Fullsend GitHub App to be
-        installed on that organisation so we can act on your behalf.
-      </p>
-      {#if installAppHref}
-        <a
-          class="btn btn-primary install-app-link"
-          href={installAppHref}
-          target="_blank"
-          rel="noopener noreferrer"
-          onclick={() => setPendingOrgListRefreshAfterInstall()}
-        >
-          Add the Fullsend app on GitHub
-        </a>
-      {:else}
-        <p class="muted install-app-unavailable">
-          Install link is unavailable (app slug not known). Your operator can set
-          <code>GITHUB_APP_SLUG</code> on the site Worker or ensure installations return a slug.
+      <h2 id="install-app-h" class="install-app-heading">Fullsend Admin app</h2>
+      {#if serverOrgs.length === 0}
+        <p class="install-app-copy">
+          After you install or change access on GitHub, click <strong>Refresh</strong> at the top of
+          this page. GitHub does not return you here automatically. It can take a minute or longer
+          before a new install appears in GitHub’s data — after you refresh, we also recheck a few
+          times in the background when the list is still empty.
         </p>
+        <p class="install-app-line">
+          {#if installAppHref}
+            <a
+              class="orgs-plain-link"
+              href={installAppHref}
+              target="_blank"
+              rel="noopener noreferrer"
+              onclick={() => setPendingOrgListRefreshAfterInstall()}
+            >
+              Install the Fullsend Admin app on GitHub
+            </a>
+            <span class="install-app-after-link"> (opens in a new tab)</span>
+          {:else}
+            <span class="install-app-unavailable-inline">
+              Install link is unavailable (app slug not known). Your operator can set
+              <code>GITHUB_APP_SLUG</code> on the site Worker or ensure installations return a slug.
+            </span>
+          {/if}
+        </p>
+      {:else}
+        <p class="install-app-copy">
+          To deploy or configure Fullsend for another organisation, install the Fullsend Admin app
+          there. When you return from GitHub, click <strong>Refresh</strong> at the top of this page.
+        </p>
+        {#if installAppHref}
+          <p class="install-app-line">
+            <a
+              class="orgs-plain-link"
+              href={installAppHref}
+              target="_blank"
+              rel="noopener noreferrer"
+              onclick={() => setPendingOrgListRefreshAfterInstall()}
+            >
+              Install the Fullsend Admin app on GitHub
+            </a>
+            <span class="install-app-after-link"> (opens in a new tab)</span>
+          </p>
+        {:else}
+          <p class="muted install-app-unavailable">
+            Install link is unavailable (app slug not known). Your operator can set
+            <code>GITHUB_APP_SLUG</code> on the site Worker or ensure installations return a slug.
+          </p>
+        {/if}
       {/if}
     </div>
   {/if}
@@ -333,30 +464,19 @@
       transform: rotate(360deg);
     }
   }
-  .org-more-loading {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    min-height: calc(5 * 2.75rem);
-    margin-top: 0.25rem;
-    border: 1px dashed #d0d7de;
-    border-radius: 8px;
-    background: #fafafa;
-  }
-  .org-more-spinner {
-    width: 2rem;
-    height: 2rem;
-    border: 3px solid #d0d7de;
-    border-top-color: #24292f;
-    border-radius: 50%;
-    animation: org-spin 0.75s linear infinite;
-  }
   .toolbar {
     display: flex;
     flex-wrap: wrap;
     gap: 0.75rem;
     align-items: center;
     margin-bottom: 0.5rem;
+  }
+  .list-check-at {
+    margin: 0 0 0.75rem;
+    font-size: 0.88rem;
+    line-height: 1.45;
+    color: #444;
+    max-width: 40rem;
   }
   .cap-hint {
     margin: 0 0 0.75rem;
@@ -391,6 +511,23 @@
   .btn:disabled {
     opacity: 0.55;
     cursor: not-allowed;
+  }
+  .btn-refresh {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+  }
+  .btn-refresh-spinner {
+    width: 0.95rem;
+    height: 0.95rem;
+    border: 2px solid #b0b8c1;
+    border-top-color: #24292f;
+    border-radius: 50%;
+    animation: org-spin 0.75s linear infinite;
+    flex-shrink: 0;
+  }
+  .btn-refresh:disabled {
+    opacity: 0.88;
   }
   .btn-muted {
     background: #eaeaea;
@@ -469,6 +606,9 @@
     border-radius: 6px;
     max-width: 40rem;
   }
+  .hint--empty {
+    margin-bottom: 1rem;
+  }
   .banner {
     display: flex;
     flex-wrap: wrap;
@@ -489,12 +629,6 @@
   .banner-retry {
     flex-shrink: 0;
   }
-  .install-empty-extra {
-    margin: 0 0 0.75rem;
-    font-size: 0.9rem;
-    line-height: 1.45;
-    max-width: 40rem;
-  }
   .install-app-block {
     margin-top: 1.25rem;
     padding-top: 1rem;
@@ -512,10 +646,49 @@
     color: #444;
     max-width: 40rem;
   }
-  .install-app-link {
-    text-decoration: none;
-    display: inline-flex;
-    align-items: center;
+  .install-app-line {
+    margin: 0 0 0.65rem;
+    font-size: 0.9rem;
+    line-height: 1.45;
+    max-width: 40rem;
+  }
+  /**
+   * Plain inline link — explicit reset so host or UA styles cannot turn this into a “button” link.
+   */
+  .orgs-plain-link,
+  .orgs-plain-link:visited {
+    appearance: none;
+    display: inline;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+    font: inherit;
+    font-weight: 400;
+    line-height: inherit;
+    color: #0969da;
+    text-decoration: underline;
+    text-underline-offset: 0.15em;
+    cursor: pointer;
+  }
+  .orgs-plain-link:hover {
+    color: #0550ae;
+  }
+  .orgs-plain-link:focus-visible {
+    outline: 2px solid #0969da;
+    outline-offset: 2px;
+    border-radius: 2px;
+  }
+  .install-app-after-link {
+    font-size: 0.9rem;
+    color: #57606a;
+    font-weight: 400;
+  }
+  .install-app-unavailable-inline {
+    color: #57606a;
+    font-weight: 400;
   }
   .install-app-unavailable {
     margin: 0;

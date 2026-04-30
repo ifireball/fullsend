@@ -43,7 +43,14 @@ export function orgRowsAndSlugFromInstallations(
       if (s) appSlug = s;
     }
     const acc = inst.account;
-    if (!acc?.login || acc.type !== "Organization") continue;
+    const accType = acc?.type?.trim();
+    if (
+      !acc?.login ||
+      !accType ||
+      accType.toLowerCase() !== "organization"
+    ) {
+      continue;
+    }
     const login = acc.login.trim();
     if (!login) continue;
     if (!byLogin.has(login)) {
