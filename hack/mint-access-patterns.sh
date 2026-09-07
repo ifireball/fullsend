@@ -141,6 +141,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+# Per-org coverage validates continuity during ADR 0044 Phase 1 migration.
 # TODO(ADR-0044): Remove per-org and both modes after existing users complete
 # migration to the sole supported per-repo installation model.
 case "$MODE" in
@@ -253,11 +254,11 @@ ensure_repo() {
 # --- formatting ---
 format_scope() {
   local json="$1"
-  local selection repos perms
+  local selection repos perms out
   selection=$(jq -r '.repository_selection // empty' <<<"$json")
   repos=$(jq -r '.granted_repos // [] | join(",")' <<<"$json")
   perms=$(jq -r '.granted_permissions // {} | to_entries | map("\(.key)=\(.value)") | join(",")' <<<"$json")
-  local out="scope=${selection}"
+  out="scope=${selection}"
   [[ -n "$repos" ]] && out+=" repos=${repos}"
   [[ -n "$perms" ]] && out+=" perms=${perms}"
   printf '%s' "$out"
@@ -414,12 +415,20 @@ mint_curl_run_script() {
 
           case "$ROLE" in
             triage) EXPECTED_PERMS='{"contents":"read","issues":"write","metadata":"read"}' ;;
+            # packages:read remains transitional in optionalRolePermissions;
+            # add it here when it becomes part of every coder token.
             coder) EXPECTED_PERMS='{"checks":"read","contents":"write","issues":"write","metadata":"read","pull_requests":"write"}' ;;
             review) EXPECTED_PERMS='{"checks":"read","contents":"read","issues":"write","metadata":"read","pull_requests":"write"}' ;;
             retro) EXPECTED_PERMS='{"actions":"read","contents":"read","issues":"write","metadata":"read","pull_requests":"write"}' ;;
             prioritize) EXPECTED_PERMS='{"contents":"read","issues":"write","metadata":"read","organization_projects":"write"}' ;;
             fullsend) EXPECTED_PERMS='{"actions":"write","actions_variables":"read","contents":"write","metadata":"read","pull_requests":"write","workflows":"write"}' ;;
             e2e) EXPECTED_PERMS='{"actions":"write","actions_variables":"write","administration":"write","contents":"write","issues":"write","members":"write","metadata":"read","organization_actions_variables":"write","organization_administration":"write","pull_requests":"write","secrets":"write","workflows":"write"}' ;;
+            *)
+              echo "Unknown role: $ROLE" >&2
+              jq -n '{outcome:"error",error:"unknown_role"}' > mint-ap-result.json
+              echo "MINT_AP_RESULT=$(cat mint-ap-result.json)"
+              exit 0
+              ;;
           esac
 
           SCOPE_VALID=true
